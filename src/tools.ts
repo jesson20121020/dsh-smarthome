@@ -6,8 +6,24 @@ import {
 } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from './json'
 import type { Config } from './config'
-import { HomeAssistantClient, HomeAssistantWsClient, type HaState } from './ha'
 import { DASHBOARD_META_KIND, type DashboardSnapshot } from './dashboard'
+import {
+  HomeAssistantClient,
+  HomeAssistantWsClient,
+  isLovelaceConfigMissing,
+  isLovelaceYamlMode,
+  type HaState,
+} from './ha'
+import {
+  LovelaceBackups,
+  applyLovelaceOps,
+  normalizeLovelaceConfig,
+  resolveLovelaceBackupDir,
+  summarizeLovelace,
+  type LovelaceConfig,
+  type LovelaceOp,
+  type LovelaceSummary,
+} from './lovelace'
 
 /** Text content block helper for `output.render` / card content. */
 function text(value: string): { type: 'text'; text: string }[] {
@@ -31,6 +47,13 @@ export function registerTools(
   ws: HomeAssistantWsClient,
   config: Config,
 ): void {
+  // Dashboard snapshots live next to the harness data, so a bad edit survives a
+  // restart as an undo point.
+  const backups = new LovelaceBackups(
+    resolveLovelaceBackupDir(config.lovelaceBackupDir),
+    config.lovelaceMaxBackups,
+  )
+
   ctx.tools.register(defineTool({
     name: 'ha_health',
     description:
@@ -755,6 +778,349 @@ export function registerTools(
       }
     },
   }))
+
+  // -------------------------------------------------------------------------
+  // Lovelace dashboards. Home Assistant's dashboard API is WebSocket-only, so
+  // these tools ride the same socket as the registries. Stored dashboards lean
+  // on HACS card types, so editing is expressed as targeted ops against the
+  // stored config rather than a whole-config rewrite: snapshot, apply, save,
+  // read back and verify.
+  // -------------------------------------------------------------------------
+  ctx.tools.register(defineTool({
+    name: 'ha_lovelace_list',
+    description:
+      'List the Home Assistant sidebar dashboards (Lovelace panels) with their mode. ' +
+      '"storage" dashboards can be edited with ha_lovelace_apply; "yaml" dashboards are ' +
+      'defined in configuration.yaml on the Home Assistant host and cannot be written ' +
+      'through the API. Also reports whether the default overview already has a stored config.',
+    parameters: {},
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => {
+        const v = value as unknown as {
+          dashboards?: { url_path?: string; title?: string; mode?: string }[]
+          default?: { note?: string }
+        }
+        const lines = (v.dashboards ?? []).map(
+          d => `- [${d.mode ?? '?'}] ${d.title || '(untitled)'}  url_path=${d.url_path ?? ''}`,
+        )
+        return text(truncate([...lines, `default overview: ${v.default?.note ?? ''}`].join('\n')))
+      },
+    },
+    async execute() {
+      const dashboards = await ws.listLovelaceDashboards()
+      const list = dashboards
+        .map(d => ({
+          // YAML-mode entries carry a filename but no id, so never leak undefined.
+          id: typeof d.id === 'string' ? d.id : '',
+          url_path: typeof d.url_path === 'string' ? d.url_path : '',
+          title: d.title ?? '',
+          mode: d.mode ?? 'storage',
+          show_in_sidebar: d.show_in_sidebar !== false,
+        }))
+        .sort((a, b) => a.url_path.localeCompare(b.url_path))
+
+      let mode = 'storage'
+      let note: string
+      try {
+        await ws.getLovelaceConfig()
+        note = 'has a stored config and can be edited (pass no urlPath)'
+      } catch (error) {
+        if (isLovelaceConfigMissing(error)) {
+          note = 'auto-generated (no stored config); the first save takes it over (pass no urlPath)'
+        } else if (isLovelaceYamlMode(error)) {
+          mode = 'yaml'
+          note = 'defined in YAML on the Home Assistant host; not writable through the API'
+        } else {
+          throw error
+        }
+      }
+      return { count: list.length, dashboards: list, default: { urlPath: '', mode, note } }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'ha_lovelace_get',
+    description:
+      'Read one Lovelace dashboard and return an index of its views and top-level cards ' +
+      '(index, card type, entity, title), plus a snapshot on disk as an undo point. Omit ' +
+      'urlPath for the default overview. Views are addressed by index, path or title; cards ' +
+      'by their index inside a view. Prefer the index over includeConfig: stored dashboards ' +
+      'are large and depend on dozens of HACS card types.',
+    parameters: {
+      urlPath: {
+        type: 'string',
+        description: 'Dashboard url_path from ha_lovelace_list; omit for the default overview',
+      },
+      includeConfig: {
+        type: 'boolean',
+        description: 'Also return the raw config JSON (large — only when the index is not enough)',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => {
+        const v = value as unknown as LovelaceSummary & { backup?: string; exists?: boolean; note?: string }
+        const head = [
+          `backup: ${v.backup ?? '-'}`,
+          ...(v.exists === false ? [`note: ${v.note ?? 'no stored config yet'}`] : []),
+        ]
+        return text(truncate([...head, describeLovelaceSummary(v)].join('\n')))
+      },
+    },
+    async execute(args) {
+      const urlPath = normalizeUrlPath(args.urlPath)
+      const { config, missing } = await readLovelace(ws, urlPath)
+      const summary = summarizeLovelace(urlPath, config)
+      // Hand out an undo point with every read: the model may follow up with a
+      // setRaw rewrite, and that has to stay reversible.
+      const backup = await backups.save(urlPath, config, 'ha_lovelace_get')
+      return {
+        ...summary,
+        exists: !missing,
+        ...(missing ? { note: 'no stored config yet — the first save takes the dashboard over' } : {}),
+        backup: backup.id,
+        backupCount: (await backups.list(urlPath)).length,
+        ...(args.includeConfig ? { config: config as unknown as JsonValue } : {}),
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'ha_lovelace_apply',
+    description:
+      'Edit a Lovelace dashboard with structural operations (approval required). Reads the ' +
+      'dashboard, snapshots it to disk, applies the ops, saves over WebSocket, then reads back ' +
+      'to verify. Ops, applied in order and atomically (one bad op changes nothing): ' +
+      '{op:"setTitle",title}; {op:"addView",view,position?}; {op:"updateView",view,patch}; ' +
+      '{op:"removeView",view}; {op:"addCard",view,card,position?} where card is a full card ' +
+      'object such as {type:"entities",title:"Lights",entities:["light.kitchen"]}; ' +
+      '{op:"updateCard",view,index,patch}; {op:"replaceCard",view,index,card}; ' +
+      '{op:"removeCard",view,index}; {op:"moveCard",view,index,toView?,toIndex?}; ' +
+      '{op:"setRaw",config}. "view" is a view index, path or title; position is "start", ' +
+      '"end" or an index; update patches merge shallowly. Set dryRun to preview the result ' +
+      'without saving (still approval-gated).',
+    parameters: {
+      urlPath: {
+        type: 'string',
+        description: 'Dashboard url_path from ha_lovelace_list; omit for the default overview',
+      },
+      ops: {
+        type: 'array',
+        description: 'Operations to apply, in order',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            op: { type: 'string', description: 'Operation name, e.g. "addCard"' },
+          },
+        },
+      },
+      reason: {
+        type: 'string',
+        description: 'Short human-readable reason for the change; recorded in the backup',
+      },
+      dryRun: {
+        type: 'boolean',
+        description: 'Preview the resulting index without saving anything',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => {
+        const v = value as unknown as {
+          applied?: string[]
+          dryRun?: boolean
+          backup?: string
+          verified?: boolean
+          urlPath?: string
+          after?: { viewCount: number; cardCount: number; bytes: number }
+          views?: LovelaceSummary['views']
+        }
+        const head = v.dryRun
+          ? `Dry run — nothing saved. Would apply: ${(v.applied ?? []).join('; ') || '(no ops)'}`
+          : `Saved${v.verified === false ? ' (read-back differs — inspect with ha_lovelace_get)' : ''}: ` +
+            `${(v.applied ?? []).join('; ') || '(no ops)'}${v.backup ? ` · backup ${v.backup}` : ''}`
+        // The result carries counts under `after`, not as a flat summary.
+        const after = v.after ?? { viewCount: 0, cardCount: 0, bytes: 0 }
+        return text(
+          truncate(
+            [
+              head,
+              describeLovelaceSummary({
+                urlPath: v.urlPath ?? '',
+                title: '',
+                viewCount: after.viewCount,
+                cardCount: after.cardCount,
+                bytes: after.bytes,
+                views: v.views ?? [],
+              }),
+            ].join('\n'),
+          ),
+        )
+      },
+    },
+    async execute(args) {
+      const urlPath = normalizeUrlPath(args.urlPath)
+      const ops = (args.ops ?? []) as LovelaceOp[]
+      const { config, missing } = await readLovelace(ws, urlPath)
+      const before = summarizeLovelace(urlPath, config)
+      const { config: next, applied } = applyLovelaceOps(config, ops)
+      const after = summarizeLovelace(urlPath, next)
+
+      if (args.dryRun) {
+        return {
+          ok: true,
+          dryRun: true,
+          saved: false,
+          urlPath,
+          applied,
+          before: countsOf(before),
+          after: countsOf(after),
+          views: after.views,
+        }
+      }
+
+      const backup = await backups.save(
+        urlPath,
+        config,
+        args.reason ?? `ha_lovelace_apply: ${applied.join('; ') || '(no ops)'}`,
+      )
+      await ws.saveLovelaceConfig(urlPath || undefined, next)
+
+      // Read back: Home Assistant could have normalized the config, and the
+      // model deserves to know whether what it asked for is what is stored.
+      const stored = await readLovelace(ws, urlPath)
+      const verified = JSON.stringify(stored.config) === JSON.stringify(next)
+      return {
+        ok: true,
+        dryRun: false,
+        saved: true,
+        urlPath,
+        applied,
+        verified,
+        ...(missing ? { tookOver: true } : {}),
+        backup: backup.id,
+        ...(verified
+          ? {}
+          : {
+              note:
+                'Saved, but the read-back differs from what was sent. Inspect the dashboard, ' +
+                `and use ha_lovelace_restore(backup="${backup.id}") to roll back if needed.`,
+            }),
+        before: countsOf(before),
+        after: countsOf(after),
+        views: after.views,
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'ha_lovelace_restore',
+    description:
+      'Restore a Lovelace dashboard from a snapshot taken by ha_lovelace_get or ' +
+      'ha_lovelace_apply (approval required). Pass backup="latest" for the newest snapshot of ' +
+      'urlPath, or a backup id from the backup field of an earlier result. The current state is ' +
+      'snapshotted first, so a restore is itself undoable.',
+    parameters: {
+      backup: {
+        type: 'string',
+        required: true,
+        description: 'Backup id from an earlier result, or "latest"',
+      },
+      urlPath: {
+        type: 'string',
+        description: 'Dashboard to restore; defaults to the dashboard the snapshot came from',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => {
+        const v = value as unknown as LovelaceSummary & {
+          restoredFrom?: string
+          previousBackup?: string
+          restoredAt?: string
+        }
+        const head = `Restored from ${v.restoredFrom ?? '?'} (${v.restoredAt ?? '?'}) · previous state saved as ${v.previousBackup ?? '-'}`
+        return text(truncate([head, describeLovelaceSummary(v)].join('\n')))
+      },
+    },
+    async execute(args) {
+      const requested = args.backup.trim()
+      const hint = args.urlPath === undefined ? undefined : normalizeUrlPath(args.urlPath)
+      const id = requested === 'latest' ? await backups.latest(hint) : requested
+      const record = await backups.read(id)
+      const urlPath = hint ?? record.urlPath
+      const current = await readLovelace(ws, urlPath)
+      const safety = await backups.save(urlPath, current.config, 'ha_lovelace_restore: pre-restore snapshot')
+      await ws.saveLovelaceConfig(urlPath || undefined, record.config)
+      const after = summarizeLovelace(urlPath, record.config)
+      return {
+        ok: true,
+        urlPath,
+        restoredFrom: record.id,
+        restoredAt: record.savedAt,
+        previousBackup: safety.id,
+        before: countsOf(summarizeLovelace(urlPath, current.config)),
+        after: countsOf(after),
+        views: after.views,
+      }
+    },
+  }))
+}
+
+/** Dashboard url_path: `''` (or omitted) means the default overview. */
+function normalizeUrlPath(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw new Error('dsh-smarthome: "urlPath" must be a string')
+  const trimmed = value.trim().replace(/^\/+/, '')
+  if (trimmed.length > 0 && !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+    throw new Error(`dsh-smarthome: "${trimmed}" is not a valid dashboard url_path (see ha_lovelace_list)`)
+  }
+  return trimmed
+}
+
+/**
+ * Read a dashboard config. An auto-generated overview reports no stored config
+ * at all, which is not an error here: it is an empty config that the first save
+ * takes over.
+ */
+async function readLovelace(
+  ws: HomeAssistantWsClient,
+  urlPath: string,
+): Promise<{ config: LovelaceConfig; missing: boolean }> {
+  try {
+    const config = await ws.getLovelaceConfig(urlPath || undefined)
+    return { config: normalizeLovelaceConfig(config), missing: false }
+  } catch (error) {
+    if (isLovelaceConfigMissing(error)) return { config: { views: [] }, missing: true }
+    throw error
+  }
+}
+
+function countsOf(summary: LovelaceSummary): { viewCount: number; cardCount: number; bytes: number } {
+  return { viewCount: summary.viewCount, cardCount: summary.cardCount, bytes: summary.bytes }
+}
+
+/** Human-readable index of a dashboard for the tool-result text. */
+function describeLovelaceSummary(summary: LovelaceSummary): string {
+  const head =
+    `${summary.urlPath || '(default overview)'}: ${summary.title || '(untitled)'} — ` +
+    `${summary.viewCount} views, ${summary.cardCount} cards, ${summary.bytes} bytes`
+  const views = (summary.views ?? []).map(view => {
+    const label = view.path ?? view.title ?? `view ${view.index}`
+    const cards = view.cards.map(card => {
+      const parts = [`[${card.index}] ${card.type}`]
+      if (card.entity) parts.push(card.entity)
+      if (card.entities) parts.push(card.entities.join(', '))
+      if (card.title) parts.push(`"${card.title}"`)
+      if (card.cards !== undefined) parts.push(`(+${card.cards} nested)`)
+      return `    ${parts.join(' ')}`
+    })
+    const truncated = view.truncatedCards === undefined ? [] : [`    … ${view.truncatedCards} more`]
+    return [`  view ${view.index} (${label}) — ${view.cardCount} cards`, ...cards, ...truncated].join('\n')
+  })
+  return [head, ...views].join('\n')
 }
 
 /** Resolve after `ms`, abortable via the execution signal. */

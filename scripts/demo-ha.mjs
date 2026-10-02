@@ -396,6 +396,64 @@ server.listen(PORT, '127.0.0.1', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Lovelace dashboards (WebSocket-only API, like Home Assistant): one
+// storage-mode dashboard, one YAML-mode dashboard, and a default overview that
+// only exists once something saves it.
+// ---------------------------------------------------------------------------
+// Real Home Assistant reports url_path with hyphens and the dashboard id with
+// underscores; YAML-mode entries carry a filename but no id at all.
+const LOVELACE_DASHBOARDS = [
+  {
+    id: 'dash_my_home',
+    url_path: 'my-home',
+    title: 'My Home',
+    mode: 'storage',
+    icon: 'mdi:home',
+    require_admin: false,
+    show_in_sidebar: true,
+  },
+  {
+    url_path: 'phone-home',
+    title: 'Phone',
+    mode: 'yaml',
+    icon: 'mdi:cellphone',
+    require_admin: false,
+    show_in_sidebar: true,
+    filename: 'ui-lovelace-phone.yaml',
+  },
+]
+
+/** url_path → stored config; the default overview is the key `lovelace`. */
+const lovelaceStorage = new Map([
+  [
+    'my-home',
+    {
+      title: 'My Home',
+      views: [
+        {
+          title: 'Overview',
+          path: 'overview',
+          cards: [
+            { type: 'entities', title: 'Lights', entities: ['light.living_room', 'light.bedroom'] },
+          ],
+        },
+        { title: 'Climate', path: 'climate', cards: [{ type: 'thermostat', entity: 'climate.hallway' }] },
+      ],
+    },
+  ],
+  // A YAML-mode dashboard is still readable over the API — only saving is refused.
+  [
+    'phone-home',
+    {
+      title: 'Phone',
+      views: [{ title: 'Home', path: 'home', cards: [{ type: 'markdown', content: 'from YAML' }] }],
+    },
+  ],
+])
+
+const clone = value => JSON.parse(JSON.stringify(value))
+
+// ---------------------------------------------------------------------------
 // WebSocket API (HA-compatible subset): auth, area registry, state_changed.
 // ---------------------------------------------------------------------------
 const wss = new WebSocketServer({ server, path: '/api/websocket' })
@@ -429,6 +487,41 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'config/device_registry/list') {
       return send({ id: msg.id, type: 'result', success: true, result: DEVICE_REGISTRY })
+    }
+
+    if (msg.type === 'lovelace/dashboards/list') {
+      return send({ id: msg.id, type: 'result', success: true, result: LOVELACE_DASHBOARDS })
+    }
+
+    if (msg.type === 'lovelace/config') {
+      const urlPath = msg.url_path ?? 'lovelace'
+      const stored = lovelaceStorage.get(urlPath)
+      if (!stored) {
+        return send({
+          id: msg.id,
+          type: 'result',
+          success: false,
+          error: { code: 'config_not_found', message: 'No config found.' },
+        })
+      }
+      return send({ id: msg.id, type: 'result', success: true, result: clone(stored) })
+    }
+
+    if (msg.type === 'lovelace/config/save') {
+      const urlPath = msg.url_path ?? 'lovelace'
+      const dashboard = LOVELACE_DASHBOARDS.find(d => d.url_path === urlPath)
+      if (dashboard && dashboard.mode !== 'storage') {
+        return send({
+          id: msg.id,
+          type: 'result',
+          success: false,
+          error: { code: 'error', message: 'The dashboard is in YAML mode, it cannot be edited via the API.' },
+        })
+      }
+      // Saving the default overview (or an unknown url_path) creates the store,
+      // exactly like Home Assistant's first "take control".
+      lovelaceStorage.set(urlPath, clone(msg.config ?? {}))
+      return send({ id: msg.id, type: 'result', success: true, result: null })
     }
 
     if (msg.type === 'subscribe_events') {

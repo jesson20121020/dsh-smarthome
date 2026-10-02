@@ -59,8 +59,9 @@
 - **自然语言控制**：不用翻 App、不用记 API，一句「把灯调暗」就搞定
 - **状态永远新鲜**：WebSocket 实时推送，agent 不会"以为"灯还开着
 - **轻量**：零运行时依赖——纯 REST + Node 内置 WebSocket，没有 MQTT、没有额外守护进程
+- **可编辑仪表盘**：读取你的 Lovelace 仪表盘，然后加卡片、改视图标题、甚至整份回滚——每次写入前都先做快照，写入后回读校验
 - **没有 Home Assistant 也能玩**：自带演示模拟器 + 交互演示页，5 分钟完整感受
-- **工程化而非拼凑**：47 个测试（含完整**真实 agent-loop 端到端**、仪表盘卡片真实 React 渲染）、严格 TypeScript、CI
+- **工程化而非拼凑**：69 个测试（含完整**真实 agent-loop 端到端**、仪表盘卡片真实 React 渲染、仪表盘操作引擎）、严格 TypeScript、CI
 
 ## 💻 你的电脑就是控制中心
 
@@ -88,6 +89,10 @@ dsh-smarthome 就装在跑 dsh 的**这台电脑**上——不用手机 App、�
 | `ha_weather` | 天气实体 + 结构化预报 | 只读 |
 | `ha_call_service` | 调用任意服务——按**实体**、按**区域**（整间房）、按**设备**、按**场景** | **需批准** |
 | `ha_render_template` | 服务端渲染 Jinja2 模板 | **需批准** |
+| `ha_lovelace_list` | 列出侧栏仪表盘及其 `storage` / `yaml` 模式、默认总览状态 | 只读 |
+| `ha_lovelace_get` | 索引一个仪表盘（视图 + 卡片，超大自动截断）并留下回滚点 | 只读 |
+| `ha_lovelace_apply` | 用结构化 op 增/改/删视图与卡片——先快照，保存后回读校验 | **需批准** |
+| `ha_lovelace_restore` | 把仪表盘回滚到某个快照（`latest` 或 `ha_lovelace_get` 给的 id） | **需批准** |
 
 示例提示词：
 
@@ -176,6 +181,8 @@ HOME_ASSISTANT_TOKEN=demo-token dsh --profile web
     maxHistoryEvents: 200
     wsEnabled: true                     # 实时事件 + 区域注册表（WebSocket）
     eventBufferSize: 50                 # ha_events 滚动缓冲大小
+    lovelaceBackupDir: ''               # 仪表盘快照目录（默认：$DSH_HOME/dsh-smarthome-backups/lovelace）
+    lovelaceMaxBackups: 20              # 每个仪表盘保留的快照数
 ```
 
 然后带上环境变量启动：
@@ -194,6 +201,7 @@ HOME_ASSISTANT_TOKEN=<token> dsh --profile web
 
 - Home Assistant 令牌可以控制实例里的**一切**——没有按实体授权的粒度。因此 `requireApproval` 默认为 `true`，`ha_call_service` / `ha_render_template` 永远走 harness 的审批接缝。
 - `allowedDomains` 是第二道保险：设置后，其他 domain 的服务调用会被直接拒绝。
+- 仪表盘写入（`ha_lovelace_apply` / `ha_lovelace_restore`）需要批准，并且**写入前必定先快照**当前配置到 `lovelaceBackupDir`（每面板保留 20 份，重启后仍可回滚）。`ha_lovelace_apply` 会回读保存结果并返回 `verified: true/false`，而不是假定写入成功。
 - 优先用 `tokenEnv` 而不是 `token`，避免密钥进 Git 提交。
 
 ## 🛠 开发
@@ -202,7 +210,7 @@ HOME_ASSISTANT_TOKEN=<token> dsh --profile web
 pnpm install
 pnpm typecheck   # 针对已发布的 @deepseek-ai/* 类型做严格 TS 检查
 pnpm build       # 打包 lib/（ESM + d.ts）
-pnpm test        # 47 个测试：卡片渲染 + 节点/插槽接线 + 真实 ToolRuntime 集成 + 完整 agent-loop 端到端
+pnpm test        # 69 个测试：卡片渲染 + 节点/插槽接线 + Lovelace 操作/备份 + 真实 ToolRuntime 集成 + 完整 agent-loop 端到端
 node scripts/capture-demo.mjs   # 重新生成 README 截图
 ```
 
@@ -210,7 +218,8 @@ node scripts/capture-demo.mjs   # 重新生成 README 截图
 
 ### 真实 Home Assistant 兼容性
 
-- 使用 **v1 REST API**（`/api/states`、`/api/services/…`、`/api/history/…`、`/api/template`、`/api/config`）和 **WebSocket API**（`/api/websocket`：认证、`subscribe_events`、`config/area_registry/list`、`config/device_registry/list`）——与官方 HA 前端同协议。
+- 使用 **v1 REST API**（`/api/states`、`/api/services/…`、`/api/history/…`、`/api/template`、`/api/config`）和 **WebSocket API**（`/api/websocket`：认证、`subscribe_events`、`config/area_registry/list`、`config/device_registry/list`、`lovelace/…`）——与官方 HA 前端同协议。
+- 仪表盘（Lovelace）编辑**只能走 WebSocket**，因为 Home Assistant 没有提供对应的 REST 接口。**存储模式**（在 UI 里编辑的那种）可读可写；**YAML 模式**的仪表盘在 `configuration.yaml` 里，会被明确拒绝并给出原因。默认「概览」是自动生成的，直到第一次保存把它「接管」（返回 `tookOver: true`）；每次写入前都会把面板快照到 `lovelaceBackupDir`。
 - 需要**长期访问令牌**（个人资料 → 安全 → 长期访问令牌）。
 - 注意事项：不支持自签名 HTTPS 证书（请用 `http://` 或有效证书）；受限制的令牌（无法调用服务）会导致 `ha_call_service` 失败。
 

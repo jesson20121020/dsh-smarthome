@@ -10,8 +10,13 @@ export const inject = ['tools']
 
 export { ConfigSchema as Config }
 
-/** Tools that change (or can be abused to change) Home Assistant state. */
-const SENSITIVE_TOOLS = new Set(['ha_call_service', 'ha_render_template'])
+/** Tools that change (or can be abused to change) Home Assistant state, with the phrase shown to the approver. */
+const SENSITIVE_TOOLS = new Map<string, string>([
+  ['ha_call_service', 'changes Home Assistant state'],
+  ['ha_render_template', 'runs a server-side template'],
+  ['ha_lovelace_apply', 'rewrites a Home Assistant dashboard'],
+  ['ha_lovelace_restore', 'restores a Home Assistant dashboard from backup'],
+])
 
 /** Structural view of the optional credentials seam (see @deepseek-ai/dsh-credentials). */
 interface CredentialsService {
@@ -69,10 +74,11 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // Require human approval for state-changing calls unless disabled.
-    if (config.requireApproval && SENSITIVE_TOOLS.has(exec.name)) {
+    const phrase = SENSITIVE_TOOLS.get(exec.name)
+    if (config.requireApproval && phrase) {
       return {
         kind: 'ask',
-        reason: `dsh-smarthome: "${exec.name}" changes Home Assistant state — approve to continue.`,
+        reason: `dsh-smarthome: "${exec.name}" ${phrase} — approve to continue.`,
       }
     }
 

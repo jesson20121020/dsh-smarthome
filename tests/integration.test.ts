@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { mkdtemp } from 'node:fs/promises'
 import type { Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -31,6 +34,8 @@ async function setup(overrides: Partial<Config> = {}) {
     maxHistoryEvents: 100,
     wsEnabled: true,
     eventBufferSize: 50,
+    lovelaceBackupDir: '',
+    lovelaceMaxBackups: 20,
     ...overrides,
   } satisfies Config)
   fibers.push(fiber)
@@ -59,7 +64,7 @@ afterAll(() => {
 })
 
 describe('dsh-smarthome in the real tool runtime', () => {
-  it('registers all fourteen ha_* tools', async () => {
+  it('registers all eighteen ha_* tools', async () => {
     const ctx = await setup()
     const names = ctx.tools.schemas().map(s => s.name).sort()
     expect(names).toEqual([
@@ -73,6 +78,10 @@ describe('dsh-smarthome in the real tool runtime', () => {
       'ha_list_devices',
       'ha_list_entities',
       'ha_list_scenes',
+      'ha_lovelace_apply',
+      'ha_lovelace_get',
+      'ha_lovelace_list',
+      'ha_lovelace_restore',
       'ha_notify',
       'ha_render_template',
       'ha_wait_for_state',
@@ -173,6 +182,8 @@ describe('dsh-smarthome in the real tool runtime', () => {
         maxHistoryEvents: 100,
         wsEnabled: false,
         eventBufferSize: 50,
+        lovelaceBackupDir: '',
+        lovelaceMaxBackups: 20,
       } satisfies Config)
       fibers.push(fiber)
       const result = await ctx.tools.execute({
@@ -308,8 +319,11 @@ describe('WebSocket-backed tools against the demo emulator', () => {
   // is started once for the whole describe and shared by the tests below.
   let emuPort: number
   let emu: { stop: () => void } | undefined
+  /** Isolated dashboard-backup directory so tests never touch $DSH_HOME. */
+  let backupDir: string
 
   beforeAll(async () => {
+    backupDir = await mkdtemp(join(tmpdir(), 'dsh-smarthome-lovelace-'))
     emuPort = 19000 + Math.floor(Math.random() * 1000)
     // The emulator reads its port from argv[2] at import time.
     process.argv[2] = String(emuPort)
@@ -694,5 +708,193 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     const v = result.value as { condition?: string; temperature?: number; forecast: unknown[] }
     expect(v.condition).toBe('sunny')
     expect(v.forecast.length).toBe(5) // emulator ships 5 forecast entries
+  }, 20000)
+
+  it('lists, reads, edits, and restores a Lovelace dashboard', async () => {
+    const ctx = await setup({
+      baseUrl: `http://127.0.0.1:${emuPort}`,
+      token: 'demo-token',
+      requireApproval: false,
+      lovelaceBackupDir: backupDir,
+    })
+    await waitForWs(ctx, 'connected')
+
+    // 1. The dashboard list separates editable storage dashboards from the
+    //    YAML one, and flags that the default overview has no stored config.
+    const list = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-list'),
+      name: 'ha_lovelace_list',
+      arguments: {},
+    })
+    expect(list.isError).toBe(false)
+    const dashboards = (list.value as { dashboards: { id: string; url_path: string; mode: string }[] })
+      .dashboards
+    expect(dashboards.find(d => d.url_path === 'my-home')?.mode).toBe('storage')
+    // Real Home Assistant gives url_path with hyphens, and YAML-mode entries
+    // have no id — leaking that undefined used to fail the lossless-JSON check.
+    const yamlEntry = dashboards.find(d => d.url_path === 'phone-home')
+    expect(yamlEntry?.mode).toBe('yaml')
+    expect(yamlEntry?.id).toBe('')
+    expect((list.value as { default: { note: string } }).default.note).toContain('auto-generated')
+
+    // A YAML-mode dashboard is still readable — only writing is refused.
+    const yamlRead = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-yaml-read'),
+      name: 'ha_lovelace_get',
+      arguments: { urlPath: 'phone-home' },
+    })
+    expect(yamlRead.isError).toBe(false)
+    expect((yamlRead.value as { viewCount: number }).viewCount).toBe(1)
+
+    // 2. Reading indexes views and cards, and hands out an undo point.
+    const got = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-get'),
+      name: 'ha_lovelace_get',
+      arguments: { urlPath: 'my-home' },
+    })
+    expect(got.isError).toBe(false)
+    const summary = got.value as {
+      viewCount: number
+      cardCount: number
+      views: { path?: string }[]
+      backup: string
+    }
+    expect(summary.viewCount).toBe(2)
+    expect(summary.cardCount).toBe(2)
+    expect(summary.views[0]?.path).toBe('overview')
+    expect(summary.backup).toContain('my-home__')
+
+    // 3. dryRun previews the result without saving anything.
+    const dry = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-dry'),
+      name: 'ha_lovelace_apply',
+      arguments: {
+        urlPath: 'my-home',
+        dryRun: true,
+        ops: [{ op: 'addCard', view: 'overview', card: { type: 'button', entity: 'switch.boiler' } }],
+      },
+    })
+    expect(dry.isError).toBe(false)
+    expect((dry.value as { saved: boolean }).saved).toBe(false)
+    expect((dry.value as { after: { cardCount: number } }).after.cardCount).toBe(3)
+
+    // 4. A real edit: add a card, retitle a view by path.
+    const applied = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-apply'),
+      name: 'ha_lovelace_apply',
+      arguments: {
+        urlPath: 'my-home',
+        reason: 'integration test',
+        ops: [
+          { op: 'addCard', view: 'overview', card: { type: 'button', entity: 'switch.boiler' } },
+          { op: 'updateView', view: 'climate', patch: { title: 'Climate control' } },
+        ],
+      },
+    })
+    expect(applied.isError).toBe(false)
+    const appliedValue = applied.value as {
+      applied: string[]
+      verified: boolean
+      after: { cardCount: number }
+      backup: string
+    }
+    expect(appliedValue.verified).toBe(true)
+    expect(appliedValue.applied).toHaveLength(2)
+    expect(appliedValue.after.cardCount).toBe(3)
+
+    // 5. The change is durable — a fresh read sees it.
+    const reread = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-reread'),
+      name: 'ha_lovelace_get',
+      arguments: { urlPath: 'my-home' },
+    })
+    const after = reread.value as { views: { title?: string; cards: { entity?: string }[] }[] }
+    expect(after.views[1]?.title).toBe('Climate control')
+    expect(after.views[0]?.cards.some(c => c.entity === 'switch.boiler')).toBe(true)
+
+    // 6. Restore rolls the edit back, keeping the pre-restore state as well.
+    const restored = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-restore'),
+      name: 'ha_lovelace_restore',
+      arguments: { backup: appliedValue.backup, urlPath: 'my-home' },
+    })
+    expect(restored.isError).toBe(false)
+    expect((restored.value as { after: { cardCount: number } }).after.cardCount).toBe(2)
+
+    const finalRead = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-final'),
+      name: 'ha_lovelace_get',
+      arguments: { urlPath: 'my-home' },
+    })
+    expect((finalRead.value as { views: { title?: string }[] }).views[1]?.title).toBe('Climate')
+  }, 30000)
+
+  it('takes over an auto-generated default overview on first save', async () => {
+    const ctx = await setup({
+      baseUrl: `http://127.0.0.1:${emuPort}`,
+      token: 'demo-token',
+      requireApproval: false,
+      lovelaceBackupDir: backupDir,
+    })
+    await waitForWs(ctx, 'connected')
+
+    const result = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-takeover'),
+      name: 'ha_lovelace_apply',
+      arguments: {
+        ops: [
+          { op: 'setTitle', title: 'Taken over' },
+          { op: 'addView', view: { title: 'First', cards: [] } },
+        ],
+      },
+    })
+    expect(result.isError).toBe(false)
+    expect((result.value as { tookOver?: boolean }).tookOver).toBe(true)
+    expect((result.value as { after: { viewCount: number } }).after.viewCount).toBe(1)
+  }, 20000)
+
+  it('refuses to write a YAML-mode dashboard', async () => {
+    const ctx = await setup({
+      baseUrl: `http://127.0.0.1:${emuPort}`,
+      token: 'demo-token',
+      requireApproval: false,
+      lovelaceBackupDir: backupDir,
+    })
+    await waitForWs(ctx, 'connected')
+
+    const result = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-yaml'),
+      name: 'ha_lovelace_apply',
+      arguments: { urlPath: 'phone-home', ops: [{ op: 'setTitle', title: 'nope' }] },
+    })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toMatch(/YAML mode/i)
+  }, 20000)
+
+  it('the approval gate blocks Lovelace writes', async () => {
+    const ctx = await setup({
+      baseUrl: `http://127.0.0.1:${emuPort}`,
+      token: 'demo-token',
+      requireApproval: true,
+      lovelaceBackupDir: backupDir,
+    })
+    const result = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-lov-gate'),
+      name: 'ha_lovelace_apply',
+      arguments: { urlPath: 'my-home', ops: [{ op: 'setTitle', title: 'gated' }] },
+    })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('rewrites a Home Assistant dashboard')
   }, 20000)
 })

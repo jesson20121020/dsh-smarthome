@@ -19,6 +19,13 @@ export interface Config {
   wsEnabled: boolean
   /** Rolling size of the in-memory state-change event buffer (`ha_events`). */
   eventBufferSize: number
+  /**
+   * Where dashboard snapshots are written before a Lovelace change. Empty means
+   * `$DSH_HOME/dsh-smarthome-backups/lovelace` (or `~/.dsh/…` when DSH_HOME is unset).
+   */
+  lovelaceBackupDir: string
+  /** Snapshots kept per dashboard before the oldest ones are pruned. */
+  lovelaceMaxBackups: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -49,4 +56,10 @@ export const Config: Schema<Config> = Schema.object({
   eventBufferSize: Schema.number()
     .description('Rolling size of the state-change event buffer')
     .default(50),
+  lovelaceBackupDir: Schema.string()
+    .description('Directory for dashboard backups (empty: $DSH_HOME/dsh-smarthome-backups/lovelace)')
+    .default(''),
+  lovelaceMaxBackups: Schema.number()
+    .description('Dashboard snapshots kept per dashboard before the oldest are pruned')
+    .default(20),
 })

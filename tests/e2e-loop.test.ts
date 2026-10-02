@@ -46,6 +46,8 @@ async function fullHarness(adapter: MockAdapter, configOverrides: Record<string,
     maxHistoryEvents: 100,
     wsEnabled: false,
     eventBufferSize: 50,
+    lovelaceBackupDir: '',
+    lovelaceMaxBackups: 20,
     ...configOverrides,
   } satisfies Parameters<typeof apply>[1])
   fibers.push(fiber)

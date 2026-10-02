@@ -36,6 +36,16 @@ export class HomeAssistantError extends Error {
   }
 }
 
+/** True when the error means "this dashboard has no stored config yet". */
+export function isLovelaceConfigMissing(err: unknown): boolean {
+  return err instanceof HomeAssistantError && /config_not_found/.test(err.message)
+}
+
+/** True when the error means "this dashboard lives in YAML, not in storage". */
+export function isLovelaceYamlMode(err: unknown): boolean {
+  return err instanceof HomeAssistantError && /yaml/i.test(err.message)
+}
+
 export interface HistoryOptions {
   /** ISO start time; defaults to one hour ago. */
   start?: string
@@ -234,6 +244,22 @@ export interface HaDevice {
   area_id?: string | null
 }
 
+/**
+ * One sidebar dashboard from the HA Lovelace registry
+ * (WebSocket `lovelace/dashboards/list`). `mode` is `storage` (editable through
+ * the API) or `yaml` (edited on the Home Assistant host).
+ */
+export interface HaLovelaceDashboard {
+  id: string
+  url_path: string
+  title?: string | null
+  mode?: string
+  icon?: string | null
+  require_admin?: boolean
+  show_in_sidebar?: boolean
+  filename?: string | null
+}
+
 /** One `state_changed` event, normalized for the model. */
 export interface HaStateChange {
   entity_id: string
@@ -259,6 +285,7 @@ interface WsMessage {
   success?: boolean
   event?: { event_type?: string; data?: Record<string, unknown> }
   result?: unknown
+  error?: { code?: string; message?: string }
 }
 
 interface PendingRequest {
@@ -405,7 +432,12 @@ export class HomeAssistantWsClient {
         this.pending.delete(msg.id)
         clearTimeout(pending.timer)
         if (msg.success) pending.resolve(msg.result)
-        else pending.reject(new HomeAssistantError(`Home Assistant WebSocket error: ${JSON.stringify(msg.result)}`))
+        else {
+          // Home Assistant reports failures as `{success:false, error:{code,message}}`;
+          // `result` is only there on success. Surface whichever is present.
+          const detail = msg.error ?? msg.result
+          pending.reject(new HomeAssistantError(`Home Assistant WebSocket error: ${JSON.stringify(detail)}`))
+        }
       }
     }
   }
@@ -425,7 +457,9 @@ export class HomeAssistantWsClient {
     return this.request<HaArea[]>('config/area_registry/list')
   }
 
-  /** Query the device registry over the socket (HA WebSocket API). */
+  /**
+   * Query the device registry over the socket (HA WebSocket API).
+   */
   async listDevices(): Promise<HaDevice[]> {
     const devices = await this.request<Array<{ id: string; name?: string | null; name_by_user?: string | null; area_id?: string | null }>>(
       'config/device_registry/list',
@@ -437,7 +471,41 @@ export class HomeAssistantWsClient {
     }))
   }
 
-  private request<T>(type: string, timeoutMs = 8000): Promise<T> {
+  /** List the sidebar dashboards with their mode (storage vs yaml) over the socket. */
+  listLovelaceDashboards(): Promise<HaLovelaceDashboard[]> {
+    return this.request<HaLovelaceDashboard[]>('lovelace/dashboards/list')
+  }
+
+  /**
+   * Read a dashboard's stored configuration (`lovelace/config`). Omit `urlPath`
+   * for the default overview. Rejects with `config_not_found` when the dashboard
+   * has no stored config (an auto-generated overview) and with a YAML-mode error
+   * when it is defined in `configuration.yaml` — Lovelace is WebSocket-only,
+   * there is no REST endpoint for it.
+   */
+  getLovelaceConfig(urlPath?: string): Promise<unknown> {
+    return this.request<unknown>(
+      'lovelace/config',
+      urlPath ? { url_path: urlPath } : undefined,
+      15000,
+    )
+  }
+
+  /** Write a dashboard's configuration (`lovelace/config/save`, storage mode only). */
+  saveLovelaceConfig(urlPath: string | undefined, config: unknown): Promise<unknown> {
+    return this.request<unknown>(
+      'lovelace/config/save',
+      { ...(urlPath ? { url_path: urlPath } : {}), config },
+      20000,
+    )
+  }
+
+  /** Send an arbitrary Home Assistant WebSocket command (request/response). */
+  command<T>(type: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+    return this.request<T>(type, params, timeoutMs)
+  }
+
+  private request<T>(type: string, params?: Record<string, unknown>, timeoutMs = 8000): Promise<T> {
     if (this.status === 'unavailable') {
       return Promise.reject(new HomeAssistantError(
         'dsh-smarthome: WebSocket is unavailable in this Node runtime (needs the built-in WebSocket, Node ≥ 22).',
@@ -455,7 +523,7 @@ export class HomeAssistantWsClient {
         reject(new HomeAssistantError(`Home Assistant WebSocket request "${type}" timed out after ${timeoutMs}ms`))
       }, timeoutMs)
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
-      this.socket?.send(JSON.stringify({ id, type }))
+      this.socket?.send(JSON.stringify({ ...params, id, type }))
     })
   }
 
