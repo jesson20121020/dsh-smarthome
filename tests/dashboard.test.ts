@@ -31,9 +31,10 @@ function toolResultEvent(meta: unknown, callId = 'call-1'): SessionEvent {
       turn: 2,
       step: 3,
       message: {
-        role: 'user',
+        role: 'tool',
         id: 'm-1',
-        content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text: 'ok' }] }],
+        toolCallId: callId,
+        content: [{ type: 'text', text: 'ok' }],
         source: { kind: 'tool' },
       },
       meta,
@@ -51,7 +52,7 @@ function contextOf<State>(event: SessionEvent, id: string, state: State | undefi
     id,
     kind: 'smarthome-dashboard',
     state,
-    start: { event, match: matchOf(event), view: undefined, location: { kind: 'unresolved' } },
+    start: matchOf(event),
     matches: [matchOf(event)],
   } as unknown as ConversationNodeContext<State>
 }
@@ -60,6 +61,13 @@ describe('smarthome-dashboard conversation node', () => {
   it('matches a tool/result event carrying dashboard meta', () => {
     const match = dashboardDefinition.match(toolResultEvent(snapshot()))
     expect(match).toEqual({ id: 'call-1', role: 'start' })
+  })
+
+  it('falls back to the event sequence when the tool message carries no call id', () => {
+    const event = toolResultEvent(snapshot())
+    const data = event.data as { message: { toolCallId?: string } }
+    delete data.message.toolCallId
+    expect(dashboardDefinition.match(event)).toEqual({ id: '42', role: 'start' })
   })
 
   it('ignores tool/result events without dashboard meta', () => {

@@ -75,6 +75,19 @@ export class HomeAssistantClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return this.send(path, init, async res => (await res.json()) as T)
+  }
+
+  /** Same pipeline as {@link request}, for endpoints that answer with plain text. */
+  private requestText(path: string, init: RequestInit = {}): Promise<string> {
+    return this.send(path, init, res => res.text())
+  }
+
+  private async send<T>(
+    path: string,
+    init: RequestInit,
+    parse: (res: Response) => Promise<T>,
+  ): Promise<T> {
     const token = await this.tokenFor()
     if (!token) {
       throw new HomeAssistantError(
@@ -102,7 +115,7 @@ export class HomeAssistantClient {
           res.status,
         )
       }
-      return (await res.json()) as T
+      return await parse(res)
     } catch (err) {
       if (err instanceof HomeAssistantError) throw err
       if (err instanceof Error && err.name === 'AbortError') {
@@ -118,9 +131,17 @@ export class HomeAssistantClient {
     }
   }
 
-  /** `GET /api/` — returns "API running." when reachable. */
-  health(): Promise<string> {
-    return this.request<string>('/api/')
+  /**
+   * `GET /api/` — Home Assistant answers `{"message":"API running."}` (an object,
+   * not a bare string), so unwrap the message before asserting reachability.
+   */
+  async health(): Promise<string> {
+    const body = await this.request<{ message?: unknown } | string>('/api/')
+    if (typeof body === 'string') return body
+    if (typeof body === 'object' && body !== null && typeof body.message === 'string') {
+      return body.message
+    }
+    return JSON.stringify(body)
   }
 
   /** `GET /api/config` — instance name, version, timezone, unit system. */
@@ -163,12 +184,33 @@ export class HomeAssistantClient {
     query.set('minimal_response', '')
     const qs = query.toString()
     const path = `/api/history/period/${encodeURIComponent(start)}${qs ? `?${qs}` : ''}`
-    return this.request<HaState[][]>(path)
+    const periods = await this.request<HaState[][]>(path)
+    // `minimal_response` makes Home Assistant strip `entity_id` (and attributes /
+    // last_updated) from every entry but the first. Passing those holes through
+    // would put `undefined` in the tool result, which is not lossless JSON, so the
+    // harness rejects the whole call — fill the identity back in instead.
+    return periods.map(period =>
+      (Array.isArray(period) ? period : []).map(state => ({
+        ...state,
+        entity_id:
+          typeof state.entity_id === 'string' && state.entity_id.length > 0
+            ? state.entity_id
+            : (options.entityId ?? ''),
+        state: typeof state.state === 'string' ? state.state : String(state.state ?? ''),
+        last_changed: typeof state.last_changed === 'string' ? state.last_changed : '',
+        last_updated:
+          typeof state.last_updated === 'string' ? state.last_updated : (state.last_changed ?? ''),
+        attributes: state.attributes ?? {},
+      })),
+    )
   }
 
-  /** `POST /api/template` — render a Jinja2 template server-side. */
+  /**
+   * `POST /api/template` — render a Jinja2 template server-side. Home Assistant
+   * answers with the rendered text itself (`text/plain`), never JSON.
+   */
   renderTemplate(template: string): Promise<string> {
-    return this.request<string>('/api/template', {
+    return this.requestText('/api/template', {
       method: 'POST',
       body: JSON.stringify({ template }),
     })

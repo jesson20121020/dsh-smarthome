@@ -36,6 +36,15 @@ export function startMockHa(options: MockHaOptions = {}): Promise<{ server: Serv
       if (options.latencyMs) setTimeout(respondNow, options.latencyMs)
       else respondNow()
     }
+    /** Real Home Assistant answers `/api/template` with `text/plain`, not JSON. */
+    const respondText = (status: number, text: string) => {
+      const respondNow = () => {
+        res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end(text)
+      }
+      if (options.latencyMs) setTimeout(respondNow, options.latencyMs)
+      else respondNow()
+    }
 
     if (options.unauthorized) {
       return respond(401, { message: 'Invalid token' })
@@ -44,7 +53,8 @@ export function startMockHa(options: MockHaOptions = {}): Promise<{ server: Serv
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname
 
-    if (req.method === 'GET' && path === '/api/') return respondRaw(200, '"API running."')
+    // Real Home Assistant answers the API root with an object, not a bare string.
+    if (req.method === 'GET' && path === '/api/') return respond(200, { message: 'API running.' })
     if (req.method === 'GET' && path === '/api/config') {
       return respond(200, {
         location_name: 'Test Home',
@@ -88,19 +98,27 @@ export function startMockHa(options: MockHaOptions = {}): Promise<{ server: Serv
       })
     }
     if (path.startsWith('/api/history/period/')) {
+      const filtered = url.searchParams.get('filter_entity_id') ?? 'light.living_room'
+      const minimal = url.searchParams.has('minimal_response')
+      const timeline = [
+        { state: 'off', last_changed: '2026-08-14T09:00:00+08:00' },
+        { state: 'on', last_changed: '2026-08-14T10:00:00+08:00' },
+      ]
+      // Real Home Assistant drops `entity_id`, `attributes` and `last_updated` from
+      // every entry but the first once `minimal_response` is requested. Mirroring
+      // that keeps the fixture able to catch `undefined` leaking into tool output.
       return respond(200, [
-        [
-          {
-            entity_id: 'light.living_room',
-            state: 'off',
-            last_changed: '2026-08-14T09:00:00+08:00',
-          },
-          {
-            entity_id: 'light.living_room',
-            state: 'on',
-            last_changed: '2026-08-14T10:00:00+08:00',
-          },
-        ],
+        timeline.map((entry, index) =>
+          minimal && index > 0
+            ? entry
+            : {
+                entity_id: filtered,
+                state: entry.state,
+                attributes: { friendly_name: 'Living Room Light' },
+                last_changed: entry.last_changed,
+                last_updated: entry.last_changed,
+              },
+        ),
       ])
     }
     if (req.method === 'POST' && path.startsWith('/api/services/')) {
@@ -121,7 +139,7 @@ export function startMockHa(options: MockHaOptions = {}): Promise<{ server: Serv
       req.on('end', () => {
         const template = (body as { template?: string })?.template ?? ''
         templates.push(template)
-        respondRaw(200, JSON.stringify(`rendered: ${template}`))
+        respondText(200, `rendered: ${template}`)
       })
       return
     }
