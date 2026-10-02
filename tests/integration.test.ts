@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Server } from 'node:http'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { apply } from '../src/index'
@@ -84,7 +84,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup()
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-health'),
+      callId: ToolCallId('t-health'),
       name: 'ha_health',
       arguments: {},
     })
@@ -98,7 +98,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup()
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-list'),
+      callId: ToolCallId('t-list'),
       name: 'ha_list_entities',
       arguments: { domain: 'light' },
     })
@@ -111,7 +111,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup()
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-state'),
+      callId: ToolCallId('t-state'),
       name: 'ha_get_state',
       arguments: { entityId: 'light.living_room' },
     })
@@ -124,7 +124,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup({ requireApproval: true })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-gate'),
+      callId: ToolCallId('t-gate'),
       name: 'ha_call_service',
       arguments: { domain: 'light', service: 'turn_on', entityId: 'light.living_room' },
     })
@@ -136,7 +136,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup({ requireApproval: true })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-tpl-gate'),
+      callId: ToolCallId('t-tpl-gate'),
       name: 'ha_render_template',
       arguments: { template: "{{ states('sensor.temperature') }}" },
     })
@@ -148,7 +148,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup({ requireApproval: false, allowedDomains: ['light'] })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-allow'),
+      callId: ToolCallId('t-allow'),
       name: 'ha_call_service',
       arguments: { domain: 'switch', service: 'turn_on', entityId: 'switch.boiler' },
     })
@@ -177,7 +177,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
       fibers.push(fiber)
       const result = await ctx.tools.execute({
         signal,
-        callId: CallId('t-call'),
+        callId: ToolCallId('t-call'),
         name: 'ha_call_service',
         arguments: {
           domain: 'light',
@@ -208,7 +208,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
       })
       const result = await ctx.tools.execute({
         signal,
-        callId: CallId('t-area'),
+        callId: ToolCallId('t-area'),
         name: 'ha_call_service',
         arguments: { domain: 'light', service: 'turn_off', areaId: 'living_room' },
       })
@@ -232,7 +232,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
       })
       const result = await ctx.tools.execute({
         signal,
-        callId: CallId('t-device'),
+        callId: ToolCallId('t-device'),
         name: 'ha_call_service',
         arguments: { domain: 'switch', service: 'turn_on', deviceId: 'abc123' },
       })
@@ -255,7 +255,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
       })
       const result = await ctx.tools.execute({
         signal,
-        callId: CallId('t-data-safety'),
+        callId: ToolCallId('t-data-safety'),
         name: 'ha_call_service',
         arguments: {
           domain: 'light',
@@ -278,7 +278,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup({ requireApproval: false })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-tpl-ok'),
+      callId: ToolCallId('t-tpl-ok'),
       name: 'ha_render_template',
       arguments: { template: "{{ states('sensor.temperature') }}" },
     })
@@ -290,7 +290,7 @@ describe('dsh-smarthome in the real tool runtime', () => {
     const ctx = await setup()
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-history'),
+      callId: ToolCallId('t-history'),
       name: 'ha_history',
       arguments: { entityId: 'light.living_room' },
     })
@@ -336,7 +336,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     while (Date.now() < deadline) {
       const res = await ctx.tools.execute({
         signal,
-        callId: CallId('t-ws-poll'),
+        callId: ToolCallId('t-ws-poll'),
         name: 'ha_health',
         arguments: {},
       })
@@ -358,7 +358,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       // 2. ha_list_areas reads the area registry over WS.
       const areas = await ctx.tools.execute({
         signal,
-        callId: CallId('t-areas'),
+        callId: ToolCallId('t-areas'),
         name: 'ha_list_areas',
         arguments: {},
       })
@@ -380,7 +380,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       while (Date.now() < deadline) {
         const res = await ctx.tools.execute({
           signal,
-          callId: CallId('t-events'),
+          callId: ToolCallId('t-events'),
           name: 'ha_events',
           arguments: {},
         })
@@ -394,7 +394,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       //    emulator resolves the area and turns off the bedroom light.
       const call = await ctx.tools.execute({
         signal,
-        callId: CallId('t-area-off'),
+        callId: ToolCallId('t-area-off'),
         name: 'ha_call_service',
         arguments: { domain: 'light', service: 'turn_off', areaId: 'bedroom' },
       })
@@ -403,7 +403,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
 
       const state = await ctx.tools.execute({
         signal,
-        callId: CallId('t-area-state'),
+        callId: ToolCallId('t-area-state'),
         name: 'ha_get_state',
         arguments: { entityId: 'light.bedroom' },
       })
@@ -414,7 +414,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     const ctx = await setup({ wsEnabled: true }) // points at the REST-only mock
     const areas = await ctx.tools.execute({
       signal,
-      callId: CallId('t-degrade-areas'),
+      callId: ToolCallId('t-degrade-areas'),
       name: 'ha_list_areas',
       arguments: {},
     })
@@ -435,7 +435,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       // 1. ha_list_scenes finds the demo scenes.
       const scenes = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scenes'),
+        callId: ToolCallId('t-scenes'),
         name: 'ha_list_scenes',
         arguments: {},
       })
@@ -450,7 +450,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       // 2. Activate "cinema" via the ordinary service-call tool.
       const activate = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scene-on'),
+        callId: ToolCallId('t-scene-on'),
         name: 'ha_call_service',
         arguments: { domain: 'scene', service: 'turn_on', entityId: 'scene.cinema' },
       })
@@ -459,7 +459,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       // 3. The cascade landed: dimmed living-room light, TV on, bedroom off.
       const livingRoom = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scene-lr'),
+        callId: ToolCallId('t-scene-lr'),
         name: 'ha_get_state',
         arguments: { entityId: 'light.living_room' },
       })
@@ -469,7 +469,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
 
       const tv = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scene-tv'),
+        callId: ToolCallId('t-scene-tv'),
         name: 'ha_get_state',
         arguments: { entityId: 'media_player.tv' },
       })
@@ -477,7 +477,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
 
       const bedroom = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scene-br'),
+        callId: ToolCallId('t-scene-br'),
         name: 'ha_get_state',
         arguments: { entityId: 'light.bedroom' },
       })
@@ -486,7 +486,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
       // 4. The whole cascade is visible in the real-time event feed.
       const events = await ctx.tools.execute({
         signal,
-        callId: CallId('t-scene-events'),
+        callId: ToolCallId('t-scene-events'),
         name: 'ha_events',
         arguments: {},
       })
@@ -512,7 +512,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     while (Date.now() < deadline) {
       const poll = await ctx.tools.execute({
         signal,
-        callId: CallId('t-dash-poll'),
+        callId: ToolCallId('t-dash-poll'),
         name: 'ha_events',
         arguments: {},
       })
@@ -522,7 +522,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
 
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-dashboard'),
+      callId: ToolCallId('t-dashboard'),
       name: 'ha_dashboard',
       arguments: {},
     })
@@ -550,7 +550,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // 1. ha_list_devices reads the WS device registry.
     const list = await ctx.tools.execute({
       signal,
-      callId: CallId('t-devices'),
+      callId: ToolCallId('t-devices'),
       name: 'ha_list_devices',
       arguments: {},
     })
@@ -564,7 +564,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // 2. Filter by area.
     const bedroom = await ctx.tools.execute({
       signal,
-      callId: CallId('t-devices-area'),
+      callId: ToolCallId('t-devices-area'),
       name: 'ha_list_devices',
       arguments: { areaId: 'bedroom' },
     })
@@ -574,13 +574,13 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // 3. Device-targeted service call: the emulator resolves device → entities.
     await ctx.tools.execute({
       signal,
-      callId: CallId('t-dev-on'),
+      callId: ToolCallId('t-dev-on'),
       name: 'ha_call_service',
       arguments: { domain: 'light', service: 'turn_on', deviceId: 'dev_living_light', data: { brightness: 90 } },
     })
     const state = await ctx.tools.execute({
       signal,
-      callId: CallId('t-dev-state'),
+      callId: ToolCallId('t-dev-state'),
       name: 'ha_get_state',
       arguments: { entityId: 'light.living_room' },
     })
@@ -600,14 +600,14 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // may have toggled it), so the first poll hits.
     const currentBoiler = await ctx.tools.execute({
       signal,
-      callId: CallId('t-wait-boiler-now'),
+      callId: ToolCallId('t-wait-boiler-now'),
       name: 'ha_get_state',
       arguments: { entityId: 'switch.boiler' },
     })
     const boilerState = (currentBoiler.value as { state: string }).state
     const hit = await ctx.tools.execute({
       signal,
-      callId: CallId('t-wait-hit'),
+      callId: ToolCallId('t-wait-hit'),
       name: 'ha_wait_for_state',
       arguments: { entityId: 'switch.boiler', targetState: boilerState, timeoutMs: 3000, checkIntervalMs: 200 },
     })
@@ -618,7 +618,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // Timeout: the light never becomes "nope".
     const miss = await ctx.tools.execute({
       signal,
-      callId: CallId('t-wait-miss'),
+      callId: ToolCallId('t-wait-miss'),
       name: 'ha_wait_for_state',
       arguments: { entityId: 'light.living_room', targetState: 'nope', timeoutMs: 800, checkIntervalMs: 200 },
     })
@@ -634,7 +634,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     })
     const before = await ctx.tools.execute({
       signal,
-      callId: CallId('t-wait-temp-before'),
+      callId: ToolCallId('t-wait-temp-before'),
       name: 'ha_get_state',
       arguments: { entityId: 'sensor.temperature' },
     })
@@ -643,7 +643,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     // The emulator drifts the temperature every 5s; wait for it to change.
     const wait = await ctx.tools.execute({
       signal,
-      callId: CallId('t-wait-temp'),
+      callId: ToolCallId('t-wait-temp'),
       name: 'ha_wait_for_state',
       arguments: { entityId: 'sensor.temperature', notTargetState: current, timeoutMs: 12000, checkIntervalMs: 300 },
     })
@@ -661,7 +661,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     })
     const persistent = await ctx.tools.execute({
       signal,
-      callId: CallId('t-notify-1'),
+      callId: ToolCallId('t-notify-1'),
       name: 'ha_notify',
       arguments: { message: 'The washer is done', title: 'Chore' },
     })
@@ -670,7 +670,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
 
     const mobile = await ctx.tools.execute({
       signal,
-      callId: CallId('t-notify-2'),
+      callId: ToolCallId('t-notify-2'),
       name: 'ha_notify',
       arguments: { message: 'Front door opened', notifyService: 'mobile_app_my_phone' },
     })
@@ -686,7 +686,7 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('t-weather'),
+      callId: ToolCallId('t-weather'),
       name: 'ha_weather',
       arguments: { forecastDays: 7 },
     })

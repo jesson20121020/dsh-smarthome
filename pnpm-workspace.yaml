@@ -1,59 +1,24 @@
-minimumReleaseAgeExclude:
-  - '@deepseek-ai/dsh-agent@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-attachment@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-brand@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-code-runtime@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-invariants@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-llm@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-scope@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-system-prompt@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-timeout@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-tools@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-typert-protocol@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-user-approval@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-agent-loop@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-credentials@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-persistence@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-settings@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-agent-default-model@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-agent-presets@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-api-gateway@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-api-remotes@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-atomic-write@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-connection@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-locale@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-runtime@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-schema-form@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-attachment@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-conversation@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-input-trigger@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-primitives@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-settings@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-client-ui-slots@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-commands@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-compaction@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-cordis-host-runner@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-goal@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-home-paths@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-host-apiproxy@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-host-directory-picker@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-host-plugin-inventory@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-host-webserver@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-jobs@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-llm-retry@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-message-feedback@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-native-command@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-projection-cache@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-projection@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-query@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-stats@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-session-title@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-skill@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-storage-domain@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-storage@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-subagent@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-token-meter@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-typert-registry@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-user-questions@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-workspace@0.1.0-rc.6'
+# Native build scripts that only arrive with the dev-tree copy of the harness
+# meta package. The plugin itself needs none of them, so they stay disabled and
+# installs stay deterministic.
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': false
+  '@google/genai': false
+  koffi: false
+  node-pty: false
+  protobufjs: false
+
+# Install policy for this tree (dev + CI).
+#
+# The `@deepseek-ai/dsh-*` packages are supplied by the running harness at
+# plugin load time. They are declared as peers so the harness compatibility
+# gate can see them, and peer auto-installation has to stay ON here: every
+# harness package declares its own intra-harness dependencies as exact-pinned
+# peers too, so with pnpm's isolated node_modules something like
+# `@deepseek-ai/dsh-agent` cannot resolve `@deepseek-ai/dsh-scope` unless pnpm
+# materialised that peer.
+autoInstallPeers: true
+
+# Prerelease `-rc.N` builds are consumed within hours of publication, so the
+# release-age quarantine must not apply to them.
+minimumReleaseAge: 0

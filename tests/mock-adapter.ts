@@ -3,7 +3,7 @@
  * (mirrors the harness's own mock-adapter helper): each model call consumes
  * the next entry of a script, and every request is recorded for assertions.
  */
-import { CallId, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 
 export function textResponse(text: string): StreamChunk[] {
@@ -17,7 +17,7 @@ export function textResponse(text: string): StreamChunk[] {
 }
 
 export function toolCallResponse(rawCallId: string, name: string, args: object, text?: string): StreamChunk[] {
-  const callId = CallId(rawCallId)
+  const callId = ToolCallId(rawCallId)
   const argumentsJson = JSON.stringify(args)
   const chunks: StreamChunk[] = []
   let index = 0

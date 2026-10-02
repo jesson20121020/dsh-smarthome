@@ -105,14 +105,11 @@ Example prompts:
 
 ## 📦 Install
 
-Requires **dsh ≥ 0.1.0-rc.6** (current npm latest).
+Requires **dsh ≥ 0.2.0-rc.1** — this fork is verified against the published `@deepseek-ai/dsh@0.2.0-rc.2` line. The npm `dsh-smarthome@1.4.0` release targets the older 0.1.x harness and is rejected by the 0.2.x compatibility gate, so install from this fork until that is released.
 
 ```sh
-# From npm (recommended — prebuilt):
-dsh plugin --profile web add dsh-smarthome
-
-# Or from GitHub (source install — pnpm builds on the fly):
-# dsh plugin --profile web add github:YLifeOnlyOnce/dsh-smarthome
+# From this fork (source install — pnpm builds on the fly):
+dsh plugin --profile web add github:jesson20121020/dsh-smarthome
 # If pnpm refuses to run the prepare build on a git dependency, allow it once:
 #   add this to <profile>/pnpm-workspace.yaml, then re-run the add:
 #     allowBuilds:
@@ -126,7 +123,7 @@ Restart `dsh --profile web` after installing. Manage it in **Settings → Plugin
 No HA instance? The repo ships a **fake HA emulator** with a small living demo home whose state *actually changes* when you call services — perfect for trying the plugin before wiring up real hardware.
 
 ```sh
-git clone https://github.com/YLifeOnlyOnce/dsh-smarthome
+git clone https://github.com/jesson20121020/dsh-smarthome
 cd dsh-smarthome
 pnpm install
 pnpm demo:ha          # serves a fake Home Assistant at http://127.0.0.1:8124
@@ -217,7 +214,7 @@ node scripts/capture-demo.mjs   # regenerate the README screenshots
 - Requires a **long-lived access token** (Profile → Security → Long-lived access tokens).
 - Caveats: self-signed HTTPS certificates are not supported (use `http://` or a valid cert); a restricted token that cannot call services will fail `ha_call_service`.
 
-DeepSeek Harness is in developer preview and changes fast. This plugin is verified against the published `@deepseek-ai/dsh@0.1.0-rc.7` line; if a harness update breaks it, please open an issue.
+This fork tracks the published `@deepseek-ai/dsh@0.2.0-rc.2` line; if a harness update breaks it, please open an issue.
 
 ## 📄 License
 

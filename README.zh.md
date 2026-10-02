@@ -105,14 +105,11 @@ dsh-smarthome 就装在跑 dsh 的**这台电脑**上——不用手机 App、�
 
 ## 📦 安装
 
-需要 **dsh ≥ 0.1.0-rc.6**（当前 npm latest）。
+需要 **dsh ≥ 0.2.0-rc.1**——本 fork 已针对 npm 发布的 `@deepseek-ai/dsh@0.2.0-rc.2` 验证。npm 上的 `dsh-smarthome@1.4.0` 面向旧的 0.1.x harness，会被 0.2.x 的兼容性闸门拒绝，因此在上游发版前请从本 fork 安装。
 
 ```sh
-# 从 npm 安装（推荐，预构建产物）：
-dsh plugin --profile web add dsh-smarthome
-
-# 或从 GitHub 安装（源码安装，pnpm 会在安装时自动构建）：
-# dsh plugin --profile web add github:YLifeOnlyOnce/dsh-smarthome
+# 从本 fork 安装（源码安装，pnpm 会在安装时自动构建）：
+dsh plugin --profile web add github:jesson20121020/dsh-smarthome
 # 如果 pnpm 拒绝运行 git 依赖的 prepare 构建脚本，需要放行一次：
 #   在 <profile>/pnpm-workspace.yaml 里加上，然后重新执行 add：
 #     allowBuilds:
@@ -126,7 +123,7 @@ dsh plugin --profile web add dsh-smarthome
 仓库自带一个**假的 HA 模拟器**：一个会"动"的演示小家——调用服务真的会改变实体状态，适合在接真实硬件之前完整体验插件。
 
 ```sh
-git clone https://github.com/YLifeOnlyOnce/dsh-smarthome
+git clone https://github.com/jesson20121020/dsh-smarthome
 cd dsh-smarthome
 pnpm install
 pnpm demo:ha          # 在 http://127.0.0.1:8124 起一个假的 Home Assistant
@@ -217,7 +214,7 @@ node scripts/capture-demo.mjs   # 重新生成 README 截图
 - 需要**长期访问令牌**（个人资料 → 安全 → 长期访问令牌）。
 - 注意事项：不支持自签名 HTTPS 证书（请用 `http://` 或有效证书）；受限制的令牌（无法调用服务）会导致 `ha_call_service` 失败。
 
-DeepSeek Harness 处于 developer preview，迭代很快。本插件已针对 npm 发布的 `@deepseek-ai/dsh@0.1.0-rc.7` 验证；如果 harness 更新导致不兼容，请提 issue。
+本 fork 跟随 npm 发布的 `@deepseek-ai/dsh@0.2.0-rc.2`；如果 harness 更新导致不兼容，请提 issue。
 
 ## 📄 许可证
 

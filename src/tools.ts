@@ -3,8 +3,8 @@ import {
   defineTool,
   type GenericCallView,
   type GenericResultView,
-  type JsonValue,
 } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from './json'
 import type { Config } from './config'
 import { HomeAssistantClient, HomeAssistantWsClient, type HaState } from './ha'
 import { DASHBOARD_META_KIND, type DashboardSnapshot } from './dashboard'

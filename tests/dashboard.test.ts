@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { dashboardDefinition } from '../src/client/dashboard'
 import { DASHBOARD_META_KIND, type DashboardSnapshot } from '../src/dashboard'
-import type { ConversationMatch, ConversationNodeContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ConversationNodeContext, ConversationStartMatch } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 const reader = { previous: () => undefined } as never
@@ -41,8 +41,8 @@ function toolResultEvent(meta: unknown, callId = 'call-1'): SessionEvent {
   } as unknown as SessionEvent
 }
 
-function matchOf(event: SessionEvent): ConversationMatch {
-  return { role: 'start', event, view: undefined, location: { kind: 'unresolved' } }
+function matchOf(event: SessionEvent): ConversationStartMatch {
+  return { role: 'start', event, location: { kind: 'unresolved' } }
 }
 
 function contextOf<State>(event: SessionEvent, id: string, state: State | undefined): ConversationNodeContext<State> {

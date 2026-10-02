@@ -5,12 +5,22 @@
  */
 import { createElement, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+// Type-only: pulls in the `slots` service augmentation that the renderer's
+// client module declares on `@deepseek-ai/cordis`'s `Context`.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { dashboardDefinition, type DashboardChatData } from './dashboard'
 import type { DashboardEntity, DashboardSnapshot } from '../dashboard'
 
-/** Required services: the conversation-node registry and the slots service. */
-export const inject = ['conversationEvents', 'slots']
+/**
+ * Required services: the Conversation assembly (`uiConversation`, owned by
+ * `@deepseek-ai/dsh-client-ui-conversation`) and the slot registry (`slots`,
+ * owned by `@deepseek-ai/dsh-client-ui-renderer`).
+ *
+ * Harness 0.1.x exposed the node registry as the separate `conversationEvents`
+ * service from `@deepseek-ai/dsh-client-runtime`; that package is gone in
+ * 0.2.0 and the registry now hangs off `ctx.uiConversation.events`.
+ */
+export const inject = ['uiConversation', 'slots']
 
 // ---------------------------------------------------------------------------
 // Theme (matches the DSH Web dark surface)
@@ -179,8 +189,8 @@ function DashboardView(props: { node: { data: DashboardChatData } }) {
 // ---------------------------------------------------------------------------
 // Client plugin body
 // ---------------------------------------------------------------------------
-export function apply(ctx: ClientContext & Context): void {
-  ctx.conversationEvents.register(dashboardDefinition)
+export function apply(ctx: Context): void {
+  ctx.uiConversation.events.register(dashboardDefinition)
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'smarthome-dashboard',

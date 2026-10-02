@@ -6,15 +6,20 @@
  * Chat node. Everything rides the KNOWN `tool/result` event type, so the
  * dashboard is durable-safe (no custom session event vocabulary) and
  * replayable from the persisted meta.
+ *
+ * Harness 0.2.0 moved the client Conversation assembly out of the removed
+ * `@deepseek-ai/dsh-client-runtime` package and into
+ * `@deepseek-ai/dsh-client-ui-conversation`; the Chat renderer payload
+ * registry (`ChatNodeDataMap`) now lives in `@deepseek-ai/dsh-client-ui-chat`.
+ * The Definition contract itself is unchanged.
  */
 import type {
   ConversationContextReader,
   ConversationLocation,
-  ConversationMatch,
   ConversationNodeContext,
   ConversationNodeDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { DASHBOARD_META_KIND, type DashboardSnapshot } from '../dashboard'
 
 export interface DashboardState {
@@ -27,7 +32,7 @@ export interface DashboardChatData {
   readonly snapshot: DashboardSnapshot
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'smarthome-dashboard': DashboardChatData
   }
@@ -53,10 +58,11 @@ export const dashboardDefinition: ConversationNodeDefinition<DashboardState> = {
   match: (event) => {
     if (event.type !== 'tool/result') return null
     if (!isDashboardMeta(event.data.meta)) return null
-    const block = event.data.message.content[0]
-    const callId = block !== undefined && block.type === 'tool-result'
-      ? String(block.toolCallId)
-      : String(event.seq)
+    // 0.2.0 carries the call identity on the tool-role message itself; 0.1.x
+    // nested it in `content[0].toolCallId`. Fall back to the event sequence so
+    // older persisted logs still assemble.
+    const { toolCallId } = event.data.message as { toolCallId?: string }
+    const callId = toolCallId !== undefined && toolCallId !== '' ? toolCallId : String(event.seq)
     return { id: callId, role: 'start' }
   },
   start: (_context, match, _reader: ConversationContextReader) => {
@@ -86,6 +92,6 @@ export const dashboardDefinition: ConversationNodeDefinition<DashboardState> = {
   },
 }
 
-// Type-only presence: the slot map declaration lives in the conversation UI
-// package; keep it in the program so the slot registration below types.
+// Type-only presence: the slot map declaration lives in the Chat UI package;
+// keep it in the program so the slot registration below types.
 export type { ChatNodeViewProps }
