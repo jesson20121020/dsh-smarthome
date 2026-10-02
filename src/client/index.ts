@@ -126,7 +126,7 @@ function EntityRow({ entity }: { entity: DashboardEntity }) {
  * keyed Chat-node seat (`node.data`), which satisfies both the view contract
  * and the slot component signature without pulling the locale-bound props.
  */
-function DashboardView(props: { node: { data: DashboardChatData } }) {
+export function DashboardView(props: { node: { data: DashboardChatData } }) {
   const { node } = props
   const snapshot: DashboardSnapshot = node.data.snapshot
   const groups = groupEntities(snapshot.entities)
@@ -197,7 +197,6 @@ export function apply(ctx: Context): void {
   }, DashboardView))
 }
 
-// Keep the type referenced so the augmentation stays part of the program.
+// `DashboardView` stays a value export so tests can render the real card.
 export type { DashboardChatData }
-export type { DashboardView as DashboardViewComponent }
 export type { ReactNode }

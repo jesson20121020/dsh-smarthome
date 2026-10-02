@@ -60,7 +60,7 @@
 - **状态永远新鲜**：WebSocket 实时推送，agent 不会"以为"灯还开着
 - **轻量**：零运行时依赖——纯 REST + Node 内置 WebSocket，没有 MQTT、没有额外守护进程
 - **没有 Home Assistant 也能玩**：自带演示模拟器 + 交互演示页，5 分钟完整感受
-- **工程化而非拼凑**：36 个测试（含完整**真实 agent-loop 端到端**）、严格 TypeScript、CI
+- **工程化而非拼凑**：47 个测试（含完整**真实 agent-loop 端到端**、仪表盘卡片真实 React 渲染）、严格 TypeScript、CI
 
 ## 💻 你的电脑就是控制中心
 
@@ -202,7 +202,7 @@ HOME_ASSISTANT_TOKEN=<token> dsh --profile web
 pnpm install
 pnpm typecheck   # 针对已发布的 @deepseek-ai/* 类型做严格 TS 检查
 pnpm build       # 打包 lib/（ESM + d.ts）
-pnpm test        # 24 个测试：客户端 + 真实 ToolRuntime 集成 + 完整 agent-loop 端到端
+pnpm test        # 47 个测试：卡片渲染 + 节点/插槽接线 + 真实 ToolRuntime 集成 + 完整 agent-loop 端到端
 node scripts/capture-demo.mjs   # 重新生成 README 截图
 ```
 

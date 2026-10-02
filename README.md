@@ -60,7 +60,7 @@ Talk to your home the way you talk to an assistant — every write goes through 
 - **Always current**: state changes reach the agent in real time over WebSocket, so it never "thinks" the light is still on when you switched it off.
 - **Lightweight**: zero runtime dependencies — plain REST + Node's built-in WebSocket. No MQTT broker, no extra daemon.
 - **Try it without Home Assistant**: the repo ships a demo emulator + interactive demo page — 5 minutes to a full feel of the plugin.
-- **Engineered, not hacked together**: 36 tests including a full **real agent-loop end-to-end** suite, strict TypeScript, CI.
+- **Engineered, not hacked together**: 47 tests including a full **real agent-loop end-to-end** suite, a real React render of the dashboard card, strict TypeScript, CI.
 
 ## 💻 Your computer is the control center
 
@@ -202,7 +202,7 @@ HOME_ASSISTANT_TOKEN=<token> dsh --profile web
 pnpm install
 pnpm typecheck   # strict TS against the published @deepseek-ai/* types
 pnpm build       # bundle lib/ (ESM + d.ts)
-pnpm test        # 24 tests: client suite + real ToolRuntime integration + full agent-loop E2E
+pnpm test        # 47 tests: card render + node/slot wiring + real ToolRuntime integration + full agent-loop E2E
 node scripts/capture-demo.mjs   # regenerate the README screenshots
 ```
 
