@@ -862,6 +862,80 @@ describe('WebSocket-backed tools against the demo emulator', () => {
     expect((result.value as { after: { viewCount: number } }).after.viewCount).toBe(1)
   }, 20000)
 
+  it('edits a card inside a section of a sections-mode dashboard', async () => {
+    const ctx = await setup({
+      baseUrl: `http://127.0.0.1:${emuPort}`,
+      token: 'demo-token',
+      requireApproval: false,
+      lovelaceBackupDir: backupDir,
+    })
+    await waitForWs(ctx, 'connected')
+
+    // The index must reveal that the cards live in a section, not on the view.
+    const read = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-sec-get'),
+      name: 'ha_lovelace_get',
+      arguments: { urlPath: 'sections-home' },
+    })
+    expect(read.isError).toBe(false)
+    const summary = read.value as {
+      cardCount: number
+      sectionCardCount: number
+      views: { cardCount: number; type?: string; sections?: { index: number; cardCount: number }[] }[]
+    }
+    expect(summary.views[0]!.type).toBe('sections')
+    expect(summary.cardCount).toBe(0)
+    expect(summary.sectionCardCount).toBe(2)
+    expect(summary.views[0]!.sections?.[0]).toMatchObject({ index: 0, cardCount: 2 })
+
+    // A card op without a section must be refused, never written to view.cards.
+    const refused = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-sec-refuse'),
+      name: 'ha_lovelace_apply',
+      arguments: {
+        urlPath: 'sections-home',
+        ops: [{ op: 'addCard', view: 0, card: { type: 'button', entity: 'switch.boiler' } }],
+      },
+    })
+    expect(refused.isError).toBe(true)
+    expect(textOf(refused)).toMatch(/uses "sections" — pass "section"/)
+
+    // With a section it lands in section 0 and survives the read-back.
+    const added = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-sec-add'),
+      name: 'ha_lovelace_apply',
+      arguments: {
+        urlPath: 'sections-home',
+        ops: [{ op: 'addCard', view: 0, section: 0, card: { type: 'button', entity: 'switch.boiler' } }],
+      },
+    })
+    expect(added.isError).toBe(false)
+    const applied = added.value as {
+      verified: boolean
+      after: { cardCount: number; sectionCardCount: number }
+      backup: string
+      views: { cards: unknown[]; sections?: { cardCount: number }[] }[]
+    }
+    expect(applied.verified).toBe(true)
+    expect(applied.after.cardCount).toBe(0)
+    expect(applied.after.sectionCardCount).toBe(3)
+    expect(applied.views[0]!.sections?.[0]!.cardCount).toBe(3)
+    expect(applied.views[0]!.cards).toHaveLength(0)
+
+    // And the rollback puts the section back to two cards.
+    const restored = await ctx.tools.execute({
+      signal,
+      callId: ToolCallId('t-sec-restore'),
+      name: 'ha_lovelace_restore',
+      arguments: { backup: applied.backup, urlPath: 'sections-home' },
+    })
+    expect(restored.isError).toBe(false)
+    expect((restored.value as { after: { sectionCardCount: number } }).after.sectionCardCount).toBe(2)
+  }, 20000)
+
   it('refuses to write a YAML-mode dashboard', async () => {
     const ctx = await setup({
       baseUrl: `http://127.0.0.1:${emuPort}`,

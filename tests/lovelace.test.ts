@@ -33,6 +33,32 @@ function fixture(): LovelaceConfig {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+/** The modern default layout: cards live inside sections, never on the view. */
+function sectionsFixture(): LovelaceConfig {
+  return {
+    views: [
+      {
+        type: 'sections',
+        sections: [
+          {
+            type: 'grid',
+            cards: [
+              { type: 'heading', heading: 'Lights' },
+              { type: 'tile', entity: 'light.a' },
+            ],
+          },
+          { type: 'grid', cards: [{ type: 'tile', entity: 'light.b' }] },
+        ],
+      },
+    ],
+  }
+}
+
+const sectionsOfView = (config: LovelaceConfig, view = 0): Record<string, unknown>[] =>
+  (config.views as { sections: Record<string, unknown>[] }[])[view]!.sections
+const cardsOfSection = (config: LovelaceConfig, section: number, view = 0): { type: string }[] =>
+  sectionsOfView(config, view)[section]!.cards as { type: string }[]
+
 describe('applyLovelaceOps', () => {
   it('inserts cards at the start, the end, and an explicit index', () => {
     const base = fixture()
@@ -125,6 +151,76 @@ describe('applyLovelaceOps', () => {
     expect(() => applyLovelaceOps({ views: 'nope' } as LovelaceConfig, [{ op: 'setTitle', title: 'x' }]))
       .toThrow(/non-array "views"/)
   })
+
+  it('adds, patches, and removes sections of a sections-mode view', () => {
+    const added = applyLovelaceOps(sectionsFixture(), [
+      { op: 'addSection', view: 0, section: { type: 'grid', cards: [] }, position: 1 },
+    ])
+    expect(sectionsOfView(added.config)).toHaveLength(3)
+    expect(added.config.views && (added.config.views as unknown[]).length).toBe(1)
+    expect(added.applied[0]).toContain('addSection')
+
+    const patched = applyLovelaceOps(sectionsFixture(), [
+      { op: 'updateSection', view: 0, section: 0, patch: { column_span: 2 } },
+    ])
+    const section = sectionsOfView(patched.config)[0]!
+    expect(section.column_span).toBe(2)
+    expect((section.cards as unknown[]).length).toBe(2)
+
+    const removed = applyLovelaceOps(sectionsFixture(), [
+      { op: 'removeSection', view: 0, section: 0 },
+    ])
+    expect(sectionsOfView(removed.config)).toHaveLength(1)
+    expect(cardsOfSection(removed.config, 0).map(c => c.type)).toEqual(['tile'])
+  })
+
+  it('addresses cards inside a section instead of the ignored view.cards', () => {
+    const added = applyLovelaceOps(sectionsFixture(), [
+      { op: 'addCard', view: 0, section: 0, card: { type: 'button', entity: 'light.c' } },
+    ])
+    expect(added.applied[0]).toContain('section 0')
+    expect(cardsOfSection(added.config, 0)).toHaveLength(3)
+    expect(cardsOfSection(added.config, 1)).toHaveLength(1)
+    // The view must not grow a `cards` array Home Assistant would ignore.
+    expect('cards' in (added.config.views as Record<string, unknown>[])[0]!).toBe(false)
+
+    const updated = applyLovelaceOps(sectionsFixture(), [
+      { op: 'updateCard', view: 0, section: 1, index: 0, patch: { entity: 'light.z' } },
+    ])
+    expect(cardsOfSection(updated.config, 1)[0]).toMatchObject({ type: 'tile', entity: 'light.z' })
+
+    const removed = applyLovelaceOps(sectionsFixture(), [
+      { op: 'removeCard', view: 0, section: 0, index: 0 },
+    ])
+    expect(cardsOfSection(removed.config, 0).map(c => c.type)).toEqual(['tile'])
+  })
+
+  it('refuses to guess where a card belongs in a sections-mode view', () => {
+    expect(() => applyLovelaceOps(sectionsFixture(), [
+      { op: 'addCard', view: 0, card: { type: 'button' } },
+    ])).toThrow(/uses "sections" — pass "section"/)
+
+    expect(() => applyLovelaceOps(sectionsFixture(), [
+      { op: 'addCard', view: 0, section: 5, card: { type: 'button' } },
+    ])).toThrow(/existing section index in 0\.\.1/)
+
+    expect(() => applyLovelaceOps(fixture(), [
+      { op: 'addCard', view: 0, section: 0, card: { type: 'button' } },
+    ])).toThrow(/this view has no "sections"/)
+  })
+
+  it('moves a card between sections and out of a section', () => {
+    const across = applyLovelaceOps(sectionsFixture(), [
+      { op: 'moveCard', view: 0, section: 0, index: 1, toSection: 1 },
+    ])
+    expect(cardsOfSection(across.config, 0).map(c => c.type)).toEqual(['heading'])
+    expect(cardsOfSection(across.config, 1).map(c => c.type)).toEqual(['tile', 'tile'])
+
+    const within = applyLovelaceOps(sectionsFixture(), [
+      { op: 'moveCard', view: 0, section: 0, index: 0, toIndex: 1 },
+    ])
+    expect(cardsOfSection(within.config, 0).map(c => c.type)).toEqual(['tile', 'heading'])
+  })
 })
 
 describe('summarizeLovelace', () => {
@@ -157,6 +253,29 @@ describe('summarizeLovelace', () => {
     expect(summary.views[0]!.cards).toHaveLength(MAX_CARDS_PER_VIEW)
     expect(summary.views[0]!.truncatedCards).toBe(5)
     expect(summary.views[0]!.cardCount).toBe(MAX_CARDS_PER_VIEW + 5)
+  })
+
+  it('indexes the sections of a sections-mode view', () => {
+    const summary = summarizeLovelace('my-home', sectionsFixture())
+    // The view itself holds no top-level cards; the cards live in the sections.
+    expect(summary.cardCount).toBe(0)
+    expect(summary.sectionCardCount).toBe(3)
+    const view = summary.views[0]!
+    expect(view.type).toBe('sections')
+    expect(view.cardCount).toBe(0)
+    expect(view.sectionCardCount).toBe(3)
+    expect(view.sections?.map(section => section.index)).toEqual([0, 1])
+    expect(view.sections?.[0]!.cards).toEqual([
+      { index: 0, type: 'heading', title: 'Lights' },
+      { index: 1, type: 'tile', entity: 'light.a' },
+    ])
+    expect(view.sections?.[1]!.cardCount).toBe(1)
+  })
+
+  it('leaves the section fields off plain views', () => {
+    const summary = summarizeLovelace('plain', fixture())
+    expect(summary.sectionCardCount).toBeUndefined()
+    expect(summary.views[0]!.sections).toBeUndefined()
   })
 })
 

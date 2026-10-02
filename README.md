@@ -61,7 +61,7 @@ Talk to your home the way you talk to an assistant — every write goes through 
 - **Lightweight**: zero runtime dependencies — plain REST + Node's built-in WebSocket. No MQTT broker, no extra daemon.
 - **Editable dashboards**: read your Lovelace dashboards, then add a card, retitle a view or roll the whole thing back — every write is snapshotted first and verified against the server afterwards.
 - **Try it without Home Assistant**: the repo ships a demo emulator + interactive demo page — 5 minutes to a full feel of the plugin.
-- **Engineered, not hacked together**: 69 tests including a full **real agent-loop end-to-end** suite, a real React render of the dashboard card, the dashboard-op engine, strict TypeScript, CI.
+- **Engineered, not hacked together**: 76 tests including a full **real agent-loop end-to-end** suite, a real React render of the dashboard card, the dashboard-op engine, strict TypeScript, CI.
 
 ## 💻 Your computer is the control center
 
@@ -90,8 +90,8 @@ dsh-smarthome runs right where dsh runs — **on your computer**. No phone app, 
 | `ha_call_service` | Call any service — by **entity**, by **area** (whole room), by **device**, or **scene** | **ask** |
 | `ha_render_template` | Render a Jinja2 template server-side | **ask** |
 | `ha_lovelace_list` | List the sidebar dashboards with their `storage` / `yaml` mode and default-overview status | read |
-| `ha_lovelace_get` | Index one dashboard (views + cards, truncating huge ones) and take an undo point | read |
-| `ha_lovelace_apply` | Add / update / remove views and cards through structured ops — snapshotted first, then verified against the server | **ask** |
+| `ha_lovelace_get` | Index one dashboard (views, sections + cards, truncating huge ones) and take an undo point | read |
+| `ha_lovelace_apply` | Add / update / remove views, sections and cards through structured ops — snapshotted first, then verified against the server | **ask** |
 | `ha_lovelace_restore` | Roll a dashboard back to a snapshot (`latest` or an id from `ha_lovelace_get`) | **ask** |
 
 Example prompts:
@@ -210,7 +210,7 @@ HOME_ASSISTANT_TOKEN=<token> dsh --profile web
 pnpm install
 pnpm typecheck   # strict TS against the published @deepseek-ai/* types
 pnpm build       # bundle lib/ (ESM + d.ts)
-pnpm test        # 69 tests: card render + node/slot wiring + Lovelace ops/backups + real ToolRuntime integration + full agent-loop E2E
+pnpm test        # 76 tests: card render + node/slot wiring + Lovelace ops/backups + real ToolRuntime integration + full agent-loop E2E
 node scripts/capture-demo.mjs   # regenerate the README screenshots
 ```
 
@@ -220,6 +220,7 @@ node scripts/capture-demo.mjs   # regenerate the README screenshots
 
 - Uses the **v1 REST API** (`/api/states`, `/api/services/…`, `/api/history/…`, `/api/template`, `/api/config`) and the **WebSocket API** (`/api/websocket`: auth, `subscribe_events`, `config/area_registry/list`, `config/device_registry/list`, `lovelace/…`) — the same protocols the official HA frontend speaks.
 - Dashboard (Lovelace) editing is **WebSocket-only**, because Home Assistant exposes no REST endpoint for it. **Storage-mode** dashboards (the ones you edit in the UI) can be read and written; **YAML-mode** ones live in `configuration.yaml` and are refused with a clear error. The default overview is auto-generated until the first save takes it over (`tookOver: true`), and every dashboard is snapshotted to `lovelaceBackupDir` before a write.
+- Both layouts are handled: a classic view keeps its cards in `cards`, while Home Assistant's modern **sections** view keeps them in `sections[].cards`. `ha_lovelace_get` lists each section, and card ops on a sections view must name the `section` they belong to — the plugin refuses to write a card where the frontend would silently ignore it.
 - Requires a **long-lived access token** (Profile → Security → Long-lived access tokens).
 - Caveats: self-signed HTTPS certificates are not supported (use `http://` or a valid cert); a restricted token that cannot call services will fail `ha_call_service`.
 

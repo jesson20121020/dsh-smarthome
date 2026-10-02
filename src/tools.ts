@@ -842,10 +842,11 @@ export function registerTools(
   ctx.tools.register(defineTool({
     name: 'ha_lovelace_get',
     description:
-      'Read one Lovelace dashboard and return an index of its views and top-level cards ' +
+      'Read one Lovelace dashboard and return an index of its views, sections and cards ' +
       '(index, card type, entity, title), plus a snapshot on disk as an undo point. Omit ' +
       'urlPath for the default overview. Views are addressed by index, path or title; cards ' +
-      'by their index inside a view. Prefer the index over includeConfig: stored dashboards ' +
+      'by their index inside a view — or inside a section when the view is of type "sections". ' +
+      'Prefer the index over includeConfig: stored dashboards ' +
       'are large and depend on dozens of HACS card types.',
     parameters: {
       urlPath: {
@@ -893,12 +894,16 @@ export function registerTools(
       'dashboard, snapshots it to disk, applies the ops, saves over WebSocket, then reads back ' +
       'to verify. Ops, applied in order and atomically (one bad op changes nothing): ' +
       '{op:"setTitle",title}; {op:"addView",view,position?}; {op:"updateView",view,patch}; ' +
-      '{op:"removeView",view}; {op:"addCard",view,card,position?} where card is a full card ' +
-      'object such as {type:"entities",title:"Lights",entities:["light.kitchen"]}; ' +
-      '{op:"updateCard",view,index,patch}; {op:"replaceCard",view,index,card}; ' +
-      '{op:"removeCard",view,index}; {op:"moveCard",view,index,toView?,toIndex?}; ' +
+      '{op:"removeView",view}; {op:"addSection",view,section,position?}; ' +
+      '{op:"updateSection",view,section,patch}; {op:"removeSection",view,section}; ' +
+      '{op:"addCard",view,section?,card,position?} where card is a full card object such as ' +
+      '{type:"entities",title:"Lights",entities:["light.kitchen"]}; ' +
+      '{op:"updateCard",view,section?,index,patch}; {op:"replaceCard",view,section?,index,card}; ' +
+      '{op:"removeCard",view,section?,index}; {op:"moveCard",view,section?,index,toView?,toSection?,toIndex?}; ' +
       '{op:"setRaw",config}. "view" is a view index, path or title; position is "start", ' +
-      '"end" or an index; update patches merge shallowly. Set dryRun to preview the result ' +
+      '"end" or an index; update patches merge shallowly. Views of type "sections" (the Home ' +
+      'Assistant default) keep their cards in sections, so there the card ops require "section": ' +
+      '<index> — ha_lovelace_get lists every section. Set dryRun to preview the result ' +
       'without saving (still approval-gated).',
     parameters: {
       urlPath: {
@@ -1098,27 +1103,51 @@ async function readLovelace(
   }
 }
 
-function countsOf(summary: LovelaceSummary): { viewCount: number; cardCount: number; bytes: number } {
-  return { viewCount: summary.viewCount, cardCount: summary.cardCount, bytes: summary.bytes }
+function countsOf(summary: LovelaceSummary): {
+  viewCount: number
+  cardCount: number
+  sectionCardCount?: number
+  bytes: number
+} {
+  return {
+    viewCount: summary.viewCount,
+    cardCount: summary.cardCount,
+    ...(summary.sectionCardCount === undefined ? {} : { sectionCardCount: summary.sectionCardCount }),
+    bytes: summary.bytes,
+  }
 }
 
 /** Human-readable index of a dashboard for the tool-result text. */
 function describeLovelaceSummary(summary: LovelaceSummary): string {
+  const sections = summary.sectionCardCount ?? 0
   const head =
     `${summary.urlPath || '(default overview)'}: ${summary.title || '(untitled)'} — ` +
-    `${summary.viewCount} views, ${summary.cardCount} cards, ${summary.bytes} bytes`
-  const views = (summary.views ?? []).map(view => {
-    const label = view.path ?? view.title ?? `view ${view.index}`
-    const cards = view.cards.map(card => {
+    `${summary.viewCount} views, ${summary.cardCount}${sections > 0 ? ` + ${sections} in sections` : ''} cards, ` +
+    `${summary.bytes} bytes`
+  const cardLines = (cards: LovelaceSummary['views'][number]['cards'], indent: string): string[] =>
+    cards.map(card => {
       const parts = [`[${card.index}] ${card.type}`]
       if (card.entity) parts.push(card.entity)
       if (card.entities) parts.push(card.entities.join(', '))
       if (card.title) parts.push(`"${card.title}"`)
       if (card.cards !== undefined) parts.push(`(+${card.cards} nested)`)
-      return `    ${parts.join(' ')}`
+      return `${indent}${parts.join(' ')}`
     })
-    const truncated = view.truncatedCards === undefined ? [] : [`    … ${view.truncatedCards} more`]
-    return [`  view ${view.index} (${label}) — ${view.cardCount} cards`, ...cards, ...truncated].join('\n')
+  const views = (summary.views ?? []).map(view => {
+    const label = view.path ?? view.title ?? `view ${view.index}`
+    const viewSections = view.sections ?? []
+    const lines = [
+      `  view ${view.index} (${label}) — ${view.cardCount} cards` +
+        (viewSections.length > 0 ? `, ${viewSections.length} sections (${view.sectionCardCount ?? 0} cards)` : ''),
+      ...cardLines(view.cards, '    '),
+    ]
+    if (view.truncatedCards !== undefined) lines.push(`    … ${view.truncatedCards} more`)
+    for (const section of viewSections) {
+      lines.push(`    section ${section.index} — ${section.cardCount} cards`)
+      lines.push(...cardLines(section.cards, '      '))
+      if (section.truncatedCards !== undefined) lines.push(`      … ${section.truncatedCards} more`)
+    }
+    return lines.join('\n')
   })
   return [head, ...views].join('\n')
 }

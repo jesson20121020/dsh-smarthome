@@ -75,6 +75,69 @@ function cardsOf(view: Record<string, unknown>, label: string): Record<string, u
   return cards as Record<string, unknown>[]
 }
 
+/** `type: sections` layouts keep their cards in `sections[].cards` instead of `view.cards`. */
+function sectionsOf(
+  view: Record<string, unknown>,
+  label: string,
+): Record<string, unknown>[] | undefined {
+  const sections = view.sections
+  if (sections === undefined) return undefined
+  if (!Array.isArray(sections)) throw new Error(`${label}: the target view has a non-array "sections"`)
+  return sections as Record<string, unknown>[]
+}
+
+function ensureSections(view: Record<string, unknown>, label: string): Record<string, unknown>[] {
+  const existing = sectionsOf(view, label)
+  if (existing !== undefined) return existing
+  const created: Record<string, unknown>[] = []
+  view.sections = created
+  return created
+}
+
+function resolveSectionIndex(
+  view: Record<string, unknown>,
+  selector: unknown,
+  label: string,
+): number {
+  const sections = sectionsOf(view, label) ?? []
+  if (sections.length === 0) {
+    throw new Error(`${label}: this view has no "sections" — drop "section" and address the view's cards`)
+  }
+  if (typeof selector === 'number' && Number.isInteger(selector) && selector >= 0 && selector < sections.length) {
+    return selector
+  }
+  throw new Error(`${label}: "section" must be an existing section index in 0..${sections.length - 1}`)
+}
+
+function describeSection(view: Record<string, unknown>, index: number): string {
+  return `${describeView(view)} section ${index}`
+}
+
+/**
+ * Resolve the card list an op addresses: either one section of a sections-mode
+ * view, or the view's own `cards`. A sections-mode view is never silently
+ * edited through `view.cards`, because Home Assistant would ignore that array.
+ */
+function cardListOf(
+  view: Record<string, unknown>,
+  section: unknown,
+  label: string,
+): { cards: Record<string, unknown>[]; where: string } {
+  if (section !== undefined) {
+    const at = resolveSectionIndex(view, section, label)
+    const sections = sectionsOf(view, label) ?? []
+    return { cards: cardsOf(sections[at] ?? {}, label), where: describeSection(view, at) }
+  }
+  const sections = sectionsOf(view, label)
+  if (sections !== undefined && sections.length > 0 && !Array.isArray(view.cards)) {
+    throw new Error(
+      `${label}: this view uses "sections" — pass "section": <index> to address the cards inside one ` +
+        '(ha_lovelace_get lists every section)',
+    )
+  }
+  return { cards: cardsOf(view, label), where: describeView(view) }
+}
+
 function describeView(view: Record<string, unknown>): string {
   if (typeof view.path === 'string' && view.path.length > 0) return view.path
   if (typeof view.title === 'string' && view.title.length > 0) return view.title
@@ -135,15 +198,21 @@ function resolveCardIndex(cards: readonly unknown[], index: unknown, label: stri
  * - `{op:'setTitle', title}` — dashboard title
  * - `{op:'addView', view, position?}` / `{op:'updateView', view, patch}` /
  *   `{op:'removeView', view}`
- * - `{op:'addCard', view, card, position?}` / `{op:'updateCard', view, index, patch}` /
- *   `{op:'replaceCard', view, index, card}` / `{op:'removeCard', view, index}`
- * - `{op:'moveCard', view, index, toView?, toIndex?}`
- * - `moveCard`'s `toIndex` counts in the destination view *after* the card is
- *   removed, so moving the last card of a two-card view is `toIndex: 1`.
+ * - `{op:'addSection', view, section, position?}` /
+ *   `{op:'updateSection', view, section, patch}` / `{op:'removeSection', view, section}`
+ *   for `type: sections` views (the Home Assistant default layout)
+ * - `{op:'addCard', view, section?, card, position?}` / `{op:'updateCard', view, section?, index, patch}` /
+ *   `{op:'replaceCard', view, section?, index, card}` / `{op:'removeCard', view, section?, index}`
+ * - `{op:'moveCard', view, section?, index, toView?, toSection?, toIndex?}` —
+ *   `toSection` defaults to the source section when `toView` is omitted
+ * - `moveCard`'s `toIndex` counts in the destination list *after* the card is
+ *   removed, so moving the last card of a two-card list is `toIndex: 1`.
  * - `{op:'setRaw', config}` — replace the whole config (still backed up)
  *
- * `updateView` / `updateCard` merge their patch shallowly; `cards` is only ever
- * touched by the explicit card ops.
+ * `updateView` / `updateCard` / `updateSection` merge their patch shallowly;
+ * `cards` is only ever touched by the explicit card ops. In a sections-mode view
+ * the `section` index is required to address cards, so a card never lands in a
+ * `view.cards` array Home Assistant would ignore.
  */
 export function applyLovelaceOps(
   config: LovelaceConfig,
@@ -190,55 +259,92 @@ export function applyLovelaceOps(
         applied.push(`removeView ${at} (${describeView(removed ?? {})})`)
         return
       }
+      case 'addSection': {
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const sections = ensureSections(view, label)
+        const section = requireObject(op.section, `${label}: "section"`)
+        const insertAt = resolvePosition(op.position, sections.length, label)
+        sections.splice(insertAt, 0, section)
+        applied.push(`addSection ${describeSection(view, insertAt)}`)
+        return
+      }
+      case 'updateSection': {
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const sections = ensureSections(view, label)
+        const at = resolveSectionIndex(view, op.section, label)
+        const patch = requireObject(op.patch, `${label}: "patch"`)
+        sections[at] = { ...(sections[at] ?? {}), ...patch }
+        applied.push(`updateSection ${describeSection(view, at)} (${Object.keys(patch).join(', ')})`)
+        return
+      }
+      case 'removeSection': {
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const sections = ensureSections(view, label)
+        const at = resolveSectionIndex(view, op.section, label)
+        sections.splice(at, 1)
+        applied.push(`removeSection ${describeSection(view, at)}`)
+        return
+      }
       case 'addCard': {
         const views = viewsOf(next)
-        const at = resolveViewIndex(next, op.view, label)
-        const view = views[at] ?? {}
-        const cards = cardsOf(view, label)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const { cards, where } = cardListOf(view, op.section, label)
         const card = requireCard(op.card, label)
         const insertAt = resolvePosition(op.position, cards.length, label)
         cards.splice(insertAt, 0, card)
-        applied.push(`addCard ${describeView(view)}[${insertAt}] (${String(card.type)})`)
+        applied.push(`addCard ${where}[${insertAt}] (${String(card.type)})`)
         return
       }
       case 'updateCard': {
-        const cards = cardsOf(viewsOf(next)[resolveViewIndex(next, op.view, label)] ?? {}, label)
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const { cards, where } = cardListOf(view, op.section, label)
         const at = resolveCardIndex(cards, op.index, label)
         const patch = requireObject(op.patch, `${label}: "patch"`)
         cards[at] = { ...(cards[at] ?? {}), ...patch }
-        applied.push(`updateCard [${at}] (${Object.keys(patch).join(', ')})`)
+        applied.push(`updateCard ${where}[${at}] (${Object.keys(patch).join(', ')})`)
         return
       }
       case 'replaceCard': {
-        const cards = cardsOf(viewsOf(next)[resolveViewIndex(next, op.view, label)] ?? {}, label)
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const { cards, where } = cardListOf(view, op.section, label)
         const at = resolveCardIndex(cards, op.index, label)
         cards[at] = requireCard(op.card, label)
-        applied.push(`replaceCard [${at}]`)
+        applied.push(`replaceCard ${where}[${at}]`)
         return
       }
       case 'removeCard': {
-        const cards = cardsOf(viewsOf(next)[resolveViewIndex(next, op.view, label)] ?? {}, label)
+        const views = viewsOf(next)
+        const view = views[resolveViewIndex(next, op.view, label)] ?? {}
+        const { cards, where } = cardListOf(view, op.section, label)
         const at = resolveCardIndex(cards, op.index, label)
         cards.splice(at, 1)
-        applied.push(`removeCard [${at}]`)
+        applied.push(`removeCard ${where}[${at}]`)
         return
       }
       case 'moveCard': {
         const views = viewsOf(next)
         const fromViewIndex = resolveViewIndex(next, op.view, label)
         const fromView = views[fromViewIndex] ?? {}
-        const cards = cardsOf(fromView, label)
-        const at = resolveCardIndex(cards, op.index, label)
+        const from = cardListOf(fromView, op.section, label)
+        const at = resolveCardIndex(from.cards, op.index, label)
         const toViewIndex = op.toView === undefined
           ? fromViewIndex
           : resolveViewIndex(next, op.toView, label)
         const toView = views[toViewIndex] ?? {}
-        const targetCards = toView === fromView ? cards : cardsOf(toView, label)
-        const [card] = cards.splice(at, 1)
+        // Moving inside the source view keeps the source section unless one is named.
+        const toSection = op.toSection ?? (op.toView === undefined ? op.section : undefined)
+        const sameList = toView === fromView && toSection === op.section && op.toView === undefined
+        const target = sameList ? from : cardListOf(toView, toSection, label)
+        const [card] = from.cards.splice(at, 1)
         if (card === undefined) throw new Error(`${label}: card ${at} disappeared mid-move`)
-        const to = resolvePosition(op.toIndex, targetCards.length, label)
-        targetCards.splice(to, 0, card)
-        applied.push(`moveCard ${describeView(fromView)}[${at}] → ${describeView(toView)}[${to}]`)
+        const to = resolvePosition(op.toIndex, target.cards.length, label)
+        target.cards.splice(to, 0, card)
+        applied.push(`moveCard ${from.where}[${at}] → ${target.where}[${to}]`)
         return
       }
       case 'setRaw': {
@@ -251,7 +357,8 @@ export function applyLovelaceOps(
       default:
         throw new Error(
           `${label}: unknown op — allowed: setTitle, addView, updateView, removeView, ` +
-            'addCard, updateCard, replaceCard, removeCard, moveCard, setRaw',
+            'addSection, updateSection, removeSection, addCard, updateCard, replaceCard, ' +
+            'removeCard, moveCard, setRaw',
         )
     }
   })
@@ -274,13 +381,26 @@ export type LovelaceCardSummary = {
   cards?: number
 }
 
+export type LovelaceSectionSummary = {
+  index: number
+  cardCount: number
+  cards: LovelaceCardSummary[]
+  /** Cards beyond {@link MAX_CARDS_PER_VIEW} that are not listed. */
+  truncatedCards?: number
+}
+
 export type LovelaceViewSummary = {
   index: number
   title?: string
   path?: string
   type?: string
+  /** Top-level `view.cards`; 0 in a sections-mode view. */
   cardCount: number
   cards: LovelaceCardSummary[]
+  /** Present for `type: sections` views, which keep their cards in sections. */
+  sections?: LovelaceSectionSummary[]
+  /** Cards inside this view's sections. */
+  sectionCardCount?: number
   /** Cards beyond {@link MAX_CARDS_PER_VIEW} that are not listed. */
   truncatedCards?: number
 }
@@ -289,7 +409,10 @@ export type LovelaceSummary = {
   urlPath: string
   title: string
   viewCount: number
+  /** Top-level cards across all views. */
   cardCount: number
+  /** Cards inside `type: sections` views (absent when there are none). */
+  sectionCardCount?: number
   bytes: number
   views: LovelaceViewSummary[]
 }
@@ -321,13 +444,30 @@ function summarizeCard(raw: unknown, index: number): LovelaceCardSummary {
   }
 }
 
-/** Index a dashboard config into views and addressable top-level cards. */
+/** Index a dashboard config into views, sections and addressable cards. */
 export function summarizeLovelace(urlPath: string, config: LovelaceConfig): LovelaceSummary {
   const views = Array.isArray(config.views) ? config.views : []
   const summaries: LovelaceViewSummary[] = views.map((rawView, index) => {
     const view = isPlainObject(rawView) ? rawView : {}
     const cards = Array.isArray(view.cards) ? view.cards : []
     const listed = cards.slice(0, MAX_CARDS_PER_VIEW).map((card, cardIndex) => summarizeCard(card, cardIndex))
+    const rawSections = Array.isArray(view.sections) ? view.sections : []
+    const sections: LovelaceSectionSummary[] = rawSections.map((rawSection, sectionIndex) => {
+      const section = isPlainObject(rawSection) ? rawSection : {}
+      const sectionCards = Array.isArray(section.cards) ? section.cards : []
+      const listedSection = sectionCards
+        .slice(0, MAX_CARDS_PER_VIEW)
+        .map((card, cardIndex) => summarizeCard(card, cardIndex))
+      return {
+        index: sectionIndex,
+        cardCount: sectionCards.length,
+        cards: listedSection,
+        ...(sectionCards.length > listedSection.length
+          ? { truncatedCards: sectionCards.length - listedSection.length }
+          : {}),
+      }
+    })
+    const sectionCardCount = sections.reduce((total, section) => total + section.cardCount, 0)
     return {
       index,
       ...(typeof view.title === 'string' ? { title: view.title } : {}),
@@ -335,14 +475,17 @@ export function summarizeLovelace(urlPath: string, config: LovelaceConfig): Love
       ...(typeof view.type === 'string' ? { type: view.type } : {}),
       cardCount: cards.length,
       cards: listed,
+      ...(sections.length > 0 ? { sections, sectionCardCount } : {}),
       ...(cards.length > listed.length ? { truncatedCards: cards.length - listed.length } : {}),
     }
   })
+  const sectionCardCount = summaries.reduce((total, view) => total + (view.sectionCardCount ?? 0), 0)
   return {
     urlPath,
     title: typeof config.title === 'string' ? config.title : '',
     viewCount: summaries.length,
     cardCount: summaries.reduce((total, view) => total + view.cardCount, 0),
+    ...(sectionCardCount > 0 ? { sectionCardCount } : {}),
     bytes: Buffer.byteLength(JSON.stringify(config)),
     views: summaries,
   }

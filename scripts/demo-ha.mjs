@@ -421,6 +421,15 @@ const LOVELACE_DASHBOARDS = [
     show_in_sidebar: true,
     filename: 'ui-lovelace-phone.yaml',
   },
+  {
+    id: 'dash_sections',
+    url_path: 'sections-home',
+    title: 'Sections',
+    mode: 'storage',
+    icon: 'mdi:view-dashboard',
+    require_admin: false,
+    show_in_sidebar: true,
+  },
 ]
 
 /** url_path → stored config; the default overview is the key `lovelace`. */
@@ -447,6 +456,23 @@ const lovelaceStorage = new Map([
     {
       title: 'Phone',
       views: [{ title: 'Home', path: 'home', cards: [{ type: 'markdown', content: 'from YAML' }] }],
+    },
+  ],
+  // Home Assistant's modern default layout: the cards live in sections.
+  [
+    'sections-home',
+    {
+      views: [
+        {
+          type: 'sections',
+          sections: [
+            {
+              type: 'grid',
+              cards: [{ type: 'heading', heading: 'Lights' }, { type: 'tile', entity: 'light.living_room' }],
+            },
+          ],
+        },
+      ],
     },
   ],
 ])
